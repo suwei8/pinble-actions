@@ -36,8 +36,9 @@ jobs:
 
       - name: 结算上一期并预注册下一期
         run: |
-          echo "SOURCE_BLOB_SHA=$(git -C main ls-tree HEAD data/k3_full_history.csv | awk '{print $3}')" >> "$GITHUB_ENV"
-          cd main && python forward_predict.py
+          cd main
+          export SOURCE_BLOB_SHA=$(git ls-tree HEAD data/k3_full_history.csv | awk '{print $3}')
+          python forward_predict.py
 
       - name: 回写数据仓
         run: |
