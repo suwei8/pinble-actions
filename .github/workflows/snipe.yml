@@ -1,0 +1,78 @@
+name: SJH Sniper
+
+# 每日发布窗口: 北京时间 17:00 左右发布模拟试机号。
+#   16:30 CST = 08:30 UTC 启动一个 50 分钟轮询循环, 覆盖 16:30-17:20。
+# 低频巡检: 每 2 小时单次探测, 捕捉休市期/白天的提前提交。
+# (cron 均为 UTC)
+
+on:
+  schedule:
+    - cron: "30 8 * * *"      # 每日 16:30 CST 进入发布窗口盯盘
+    - cron: "7 */2 * * *"     # 每 2 小时例行单次探测
+  workflow_dispatch:
+    inputs:
+      loop_minutes:
+        description: "循环盯盘分钟数 (0=单次)"
+        default: "0"
+        required: false
+
+concurrency:
+  group: snipe-data
+  cancel-in-progress: false
+
+jobs:
+  snipe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      PINBLE_HDSN: ${{ secrets.PINBLE_HDSN }}
+      PINBLE_GLOBAL_ID: ${{ secrets.PINBLE_GLOBAL_ID }}
+      PINBLE_GLOBAL_VD: ${{ secrets.PINBLE_GLOBAL_VD }}
+      PINBLE_GLOBAL_UD: ${{ secrets.PINBLE_GLOBAL_UD }}
+      LOOP: ${{ github.event.inputs.loop_minutes || '0' }}
+
+    steps:
+      - name: 检出数据仓
+        uses: actions/checkout@v5
+        with:
+          repository: suwei8/pinble-data
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+          path: main
+          ref: main
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - run: pip install requests
+
+      - name: Snipe (daily publish window)
+        if: github.event_name == 'schedule' && github.event.schedule == '30 8 * * *'
+        run: cd main && python snipe.py --loop 50 --interval 15
+
+      - name: Snipe (single check / manual loop)
+        if: github.event_name != 'schedule' || github.event.schedule != '30 8 * * *'
+        run: |
+          cd main
+          if [ "$LOOP" != "0" ] && [ -n "$LOOP" ]; then
+            python snipe.py --loop "$LOOP" --interval 15
+          else
+            python snipe.py --once
+          fi
+
+      - name: 回写数据仓
+        run: |
+          cd main
+          git config user.name "sjh-sniper[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/snipe_log.csv data/snipe_events.jsonl data/state.json
+          if git diff --cached --quiet; then
+            echo "无变更，跳过提交"
+            exit 0
+          fi
+          git commit -m "snipe: $(date -u +%Y-%m-%dT%H:%MZ)"
+          for i in 1 2 3; do
+            git pull --rebase origin main && git push && exit 0
+            sleep $((i * 15))
+          done
+          exit 1

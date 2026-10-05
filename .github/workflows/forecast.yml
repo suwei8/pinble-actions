@@ -1,0 +1,64 @@
+name: 自动预测下一期试机号
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 北京时间 18:00-次日03:30 每30分钟一次;forward_predict.py 幂等,无新期不产生变更
+    - cron: '0,30 10-19 * * *'
+
+concurrency:
+  group: forward-prediction
+  cancel-in-progress: false
+
+jobs:
+  predict:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 检出数据仓
+        uses: actions/checkout@v5
+        with:
+          repository: suwei8/pinble-data
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+          path: main
+          ref: main
+
+      - name: 安装 Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: main/requirements.txt
+
+      - name: 安装依赖
+        run: pip install -r main/requirements.txt
+
+      - name: 结算上一期并预注册下一期
+        run: |
+          echo "SOURCE_BLOB_SHA=$(git -C main ls-tree HEAD data/k3_full_history.csv | awk '{print $3}')" >> "$GITHUB_ENV"
+          cd main && python forward_predict.py
+
+      - name: 回写数据仓
+        run: |
+          cd main
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md forward/
+          if git diff --cached --quiet; then
+            echo "无数据或预测变化，跳过提交"
+            exit 0
+          fi
+          TARGET=$(python - <<'PY'
+          import csv
+          with open("forward/topk_ledger.csv", encoding="utf-8-sig") as f:
+              rows=list(csv.DictReader(f))
+          print(rows[-1]["target_issue"])
+          PY
+          )
+          git commit -m "forecast: preregister issue $TARGET"
+          for i in 1 2 3; do
+            git pull --rebase origin main && git push && exit 0
+            sleep $((i * 15))
+          done
+          exit 1
