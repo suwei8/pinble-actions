@@ -3,8 +3,9 @@ name: 自动预测下一期试机号
 on:
   workflow_dispatch:
   schedule:
-    # 北京时间 18:00-次日03:30 每30分钟一次;forward_predict.py 幂等,无新期不产生变更
-    - cron: '0,30 10-19 * * *'
+    # 北京时间 18:05-次日03:35 每30分钟一次;forward_predict.py 幂等,无新期不产生变更
+    # 避开整点/半点(github schedule 高负载时段易延迟/丢触发)
+    - cron: '5,35 10-19 * * *'
 
 concurrency:
   group: forward-prediction

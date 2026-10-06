@@ -3,7 +3,10 @@ name: 每日增量采集
 on:
   schedule:
     # GitHub Actions 的 cron 只认 UTC；17:40 北京时间 = 09:40 UTC
+    # 后两条为冗余备份: GitHub schedule 在高负载时会延迟/丢弃触发, 采集幂等故可安全重复
     - cron: '40 9 * * *'
+    - cron: '10 10 * * *'   # 备份① 北京 18:10
+    - cron: '40 10 * * *'   # 备份② 北京 18:40
   workflow_dispatch:
 
 permissions:

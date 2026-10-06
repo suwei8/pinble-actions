@@ -8,6 +8,7 @@ name: SJH Sniper
 on:
   schedule:
     - cron: "30 8 * * *"      # 每日 16:30 CST 进入发布窗口盯盘
+    - cron: "0 9 * * *"       # 窗口备份: 17:00 CST 再盯 30 分钟 (GitHub schedule 可能丢触发)
     - cron: "7 */2 * * *"     # 每 2 小时例行单次探测
   workflow_dispatch:
     inputs:
@@ -50,8 +51,12 @@ jobs:
         if: github.event_name == 'schedule' && github.event.schedule == '30 8 * * *'
         run: cd main && python snipe.py --loop 50 --interval 15
 
+      - name: Snipe (window backup)
+        if: github.event_name == 'schedule' && github.event.schedule == '0 9 * * *'
+        run: cd main && python snipe.py --loop 30 --interval 15
+
       - name: Snipe (single check / manual loop)
-        if: github.event_name != 'schedule' || github.event.schedule != '30 8 * * *'
+        if: github.event_name != 'schedule' || (github.event.schedule != '30 8 * * *' && github.event.schedule != '0 9 * * *')
         run: |
           cd main
           if [ "$LOOP" != "0" ] && [ -n "$LOOP" ]; then
