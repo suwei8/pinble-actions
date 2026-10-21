@@ -1,10 +1,6 @@
 name: 验证 3dtong-v2 跨仓库事件
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/dispatch-smoke.yml"
   workflow_dispatch:
 
 permissions:
