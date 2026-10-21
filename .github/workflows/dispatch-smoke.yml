@@ -1,0 +1,69 @@
+name: 验证 3dtong-v2 跨仓库事件
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/dispatch-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: 只读签出私有历史数据（不写回）
+        uses: actions/checkout@v4
+        with:
+          repository: suwei8/pinble-data
+          ref: main
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+          path: private-source
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: 验证来源是最后一次真正修改主CSV的提交
+        id: source
+        run: |
+          set -euo pipefail
+          sha=$(git -C private-source log -1 --format=%H -- data/k3_full_history.csv)
+          [[ "$sha" =~ ^[a-f0-9]{40}$ ]]
+          git -C private-source diff-tree --no-commit-id --name-only -r "$sha" | grep -Fxq data/k3_full_history.csv
+          echo "source_commit=$sha" >> "$GITHUB_OUTPUT"
+          echo "只读来源校验通过；未查看或发布私有开奖号"
+
+      - name: 使用已配置的令牌投递真实跨仓库测试事件
+        env:
+          PREDICT_DISPATCH_TOKEN: ${{ secrets.PREDICT_DISPATCH_TOKEN }}
+          SOURCE_COMMIT: ${{ steps.source.outputs.source_commit }}
+        run: |
+          set -euo pipefail
+          if [ -z "$PREDICT_DISPATCH_TOKEN" ]; then
+            echo "::error::PREDICT_DISPATCH_TOKEN 为空或尚未配置"
+            exit 1
+          fi
+          payload=$(python - <<'PY'
+          import os,json
+          print(json.dumps({
+            "event_type":"pinble_history_updated",
+            "client_payload":{"source_commit":os.environ["SOURCE_COMMIT"]},
+          }))
+          PY
+          )
+          status=$(curl --silent --show-error --retry 2 --retry-delay 3 \
+            -o /tmp/dispatch-response -w '%{http_code}' \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $PREDICT_DISPATCH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/suwei8/3dtong-v2/dispatches" \
+            -d "$payload")
+          if [ "$status" != "204" ]; then
+            echo "::error::跨仓库事件投递未被接受（HTTP $status）"
+            cat /tmp/dispatch-response
+            exit 1
+          fi
+          echo "跨仓库 repository_dispatch 已被 GitHub 接受（HTTP 204）"
