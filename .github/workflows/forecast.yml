@@ -85,7 +85,7 @@ jobs:
           exit 1
 
       - name: 发送预测到微信
-        if: steps.predict.outputs.new == 'true'
+        if: steps.predict.outputs.new == 'true' || github.event_name == 'workflow_dispatch'
         env:
           WKY_API_TOKEN: ${{ secrets.WKY_API_TOKEN }}
           TARGET: ${{ steps.predict.outputs.target }}
