@@ -53,15 +53,9 @@ jobs:
           if [ -n "$NEW_TARGET" ] && [ "$OLD_TARGET" != "$NEW_TARGET" ]; then
             echo "new=true" >> "$GITHUB_OUTPUT"
             echo "target=$NEW_TARGET" >> "$GITHUB_OUTPUT"
-            python - <<'PY' >> "$GITHUB_OUTPUT"
-            import csv
-            with open("forward/topk_ledger.csv", encoding="utf-8-sig") as f:
-                rows = list(csv.DictReader(f))
-            r = rows[-1]
-            print(f"top1={r['top1']}")
-            print(f"top2={r['top2']}")
-            print(f"top3={r['top3']}")
-            PY
+            echo "top1=$(tail -n 1 forward/topk_ledger.csv | cut -d, -f5)" >> "$GITHUB_OUTPUT"
+            echo "top2=$(tail -n 1 forward/topk_ledger.csv | cut -d, -f6)" >> "$GITHUB_OUTPUT"
+            echo "top3=$(tail -n 1 forward/topk_ledger.csv | cut -d, -f7)" >> "$GITHUB_OUTPUT"
           else
             echo "new=false" >> "$GITHUB_OUTPUT"
           fi
@@ -103,24 +97,8 @@ jobs:
             echo "::warning::未设置 Secret WKY_API_TOKEN，跳过微信推送（预测已回写数据仓）"
             exit 0
           fi
-          python - <<'PY'
-          import json, os
-          target = os.environ["TARGET"]
-          top1 = os.environ["TOP1"]
-          top2 = os.environ["TOP2"].replace("|", "、")
-          top3 = os.environ["TOP3"].replace("|", "、")
-          msg = f"试机号预测 {target}期\n独胆: {top1}\n二码: {top2}\n三码: {top3}"
-          payload = {"actions": [{"type": "wechat_message", "row": 1, "text": msg}]}
-          with open("/tmp/wx_payload.json", "w", encoding="utf-8") as f:
-              json.dump(payload, f, ensure_ascii=False)
-          print(msg)
-          PY
+          python3 -c "import json,os; target=os.environ['TARGET']; top1=os.environ['TOP1']; top2=os.environ['TOP2'].replace('|','、'); top3=os.environ['TOP3'].replace('|','、'); msg=f'试机号预测 {target}期\n独胆: {top1}\n二码: {top2}\n三码: {top3}'; payload={'actions':[{'type':'wechat_message','row':1,'text':msg}]}; open('/tmp/wx_payload.json','w',encoding='utf-8').write(json.dumps(payload,ensure_ascii=False)); print(msg)"
           echo "正在推送..."
-          curl --fail --silent --show-error --retry 2 --retry-delay 3 --max-time 120 \
-            -X POST \
-            -H "Content-Type: application/json" \
-            -H "Authorization: Bearer $WKY_API_TOKEN" \
-            "https://pa.555606.xyz/v1/notify" \
-            -d @/tmp/wx_payload.json
+          curl --fail --silent --show-error --retry 2 --retry-delay 3 --max-time 120 -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $WKY_API_TOKEN" "https://pa.555606.xyz/v1/notify" -d @/tmp/wx_payload.json
           echo ""
           echo "微信推送已发送"
