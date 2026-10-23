@@ -50,12 +50,16 @@ jobs:
           if [ -f forward/topk_ledger.csv ]; then
             NEW_TARGET=$(tail -n 1 forward/topk_ledger.csv | cut -d, -f1)
           fi
-          if [ -n "$NEW_TARGET" ] && [ "$OLD_TARGET" != "$NEW_TARGET" ]; then
-            echo "new=true" >> "$GITHUB_OUTPUT"
+          if [ -n "$NEW_TARGET" ]; then
             echo "target=$NEW_TARGET" >> "$GITHUB_OUTPUT"
             echo "top1=$(tail -n 1 forward/topk_ledger.csv | cut -d, -f5)" >> "$GITHUB_OUTPUT"
             echo "top2=$(tail -n 1 forward/topk_ledger.csv | cut -d, -f6)" >> "$GITHUB_OUTPUT"
             echo "top3=$(tail -n 1 forward/topk_ledger.csv | cut -d, -f7)" >> "$GITHUB_OUTPUT"
+            if [ "$OLD_TARGET" != "$NEW_TARGET" ]; then
+              echo "new=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "new=false" >> "$GITHUB_OUTPUT"
+            fi
           else
             echo "new=false" >> "$GITHUB_OUTPUT"
           fi
@@ -85,7 +89,7 @@ jobs:
           exit 1
 
       - name: 发送预测到微信
-        if: steps.predict.outputs.new == 'true' || github.event_name == 'workflow_dispatch'
+        if: steps.predict.outputs.target != '' && (steps.predict.outputs.new == 'true' || github.event_name == 'workflow_dispatch')
         env:
           WKY_API_TOKEN: ${{ secrets.WKY_API_TOKEN }}
           TARGET: ${{ steps.predict.outputs.target }}
