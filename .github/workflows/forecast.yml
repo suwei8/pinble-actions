@@ -6,6 +6,8 @@ on:
     # 北京时间 18:05-次日03:35 每30分钟一次;forward_predict.py 幂等,无新期不产生变更
     # 避开整点/半点(github schedule 高负载时段易延迟/丢触发)
     - cron: '5,35 10-19 * * *'
+    # 北京时间 10:00: TG 推送当日待开奖期的预测 (此时夜间采集已入库, 预测为 pending)
+    - cron: '0 2 * * *'
 
 concurrency:
   group: forward-prediction
@@ -106,3 +108,45 @@ jobs:
           curl --fail --silent --show-error --retry 2 --retry-delay 3 --max-time 120 -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $WKY_API_TOKEN" "https://pa.555606.xyz/v1/notify" -d @/tmp/wx_payload.json
           echo ""
           echo "微信推送已发送"
+
+      # 每日 10:00(北京) 推送当日待开奖期预测; 其他滚动时段不推 (避免重复)
+      - name: TG 通知（当日预测）
+        if: steps.predict.outputs.target != '' && (github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch')
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TARGET: ${{ steps.predict.outputs.target }}
+          TOP1: ${{ steps.predict.outputs.top1 }}
+          TOP2: ${{ steps.predict.outputs.top2 }}
+          TOP3: ${{ steps.predict.outputs.top3 }}
+        run: |
+          python3 - <<'PY'
+          import csv, os, sys
+          import requests
+
+          token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+          chat = os.environ.get("TELEGRAM_CHAT_ID", "")
+          if not token or not chat:
+              print("::warning::未设置 TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID，跳过 TG 通知")
+              sys.exit(0)
+
+          # 仅当最新预测仍为 pending（未结算 = 待开奖期）时推送
+          with open("main/forward/topk_ledger.csv", encoding="utf-8-sig") as f:
+              last = list(csv.DictReader(f))[-1]
+          if last["status"] != "pending":
+              print(f"最新预测 {last['target_issue']} 已结算，跳过 TG 推送")
+              sys.exit(0)
+
+          t1 = os.environ["TOP1"].replace("|", "、")
+          t2 = os.environ["TOP2"].replace("|", "、")
+          t3 = os.environ["TOP3"].replace("|", "、")
+          msg = (f"拼搏 {os.environ['TARGET']}期预测\n"
+                 f"独胆：{t1}\n二码：{t2}\n三码：{t3}")
+          resp = requests.post(
+              f"https://api.telegram.org/bot{token}/sendMessage",
+              json={"chat_id": chat, "text": msg},
+              timeout=15,
+          )
+          resp.raise_for_status()
+          print("TG 已发送:", msg.replace("\n", " / "))
+          PY

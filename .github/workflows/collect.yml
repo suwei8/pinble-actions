@@ -2,11 +2,15 @@ name: 每日增量采集
 
 on:
   schedule:
-    # GitHub Actions 的 cron 只认 UTC；17:40 北京时间 = 09:40 UTC
-    # 后两条为冗余备份: GitHub schedule 在高负载时会延迟/丢弃触发, 采集幂等故可安全重复
-    - cron: '40 9 * * *'
+    # GitHub Actions 的 cron 只认 UTC
+    # 时段一: 北京 17:05 采集试机号 (试机号通常 16:30-17:00 发布) -> TG 推送试机号
+    - cron: '5 9 * * *'
+    # 中间两条为冗余备份: GitHub schedule 在高负载时会延迟/丢弃触发, 采集幂等故可安全重复
     - cron: '10 10 * * *'   # 备份① 北京 18:10
     - cron: '40 10 * * *'   # 备份② 北京 18:40
+    # 时段二: 北京 21:21 采集开奖号 (21:15 开奖) -> TG 推送开奖号
+    - cron: '21 13 * * *'
+    - cron: '50 13 * * *'   # 开奖号备份 北京 21:50
   workflow_dispatch:
 
 permissions:
@@ -120,6 +124,79 @@ jobs:
             "https://api.github.com/repos/suwei8/3dtong-v2/dispatches" \
             -d "$payload"
           echo "通知已发送到 3dtong-v2 (source commit: $SOURCE_COMMIT)"
+
+      # TG 去重依据: 仅当本次运行真正写入新数据时推送
+      #   filled_sj>0 -> 试机号首次入库    filled_kj>0 -> 开奖号首次入库
+      # 备份时段重跑时两者均为 0, 不会重复推送
+      - name: TG 通知（试机号 / 开奖号命中结果）
+        if: steps.collect.outcome == 'success' && (steps.collect.outputs.filled_sj != '0' || steps.collect.outputs.filled_kj != '0')
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ISSUE: ${{ steps.collect.outputs.issue }}
+          SJCODE: ${{ steps.collect.outputs.sjcode }}
+          FILLED_SJ: ${{ steps.collect.outputs.filled_sj }}
+          FILLED_KJ: ${{ steps.collect.outputs.filled_kj }}
+        run: |
+          python3 - <<'PY'
+          import csv, os, sys
+          import requests
+
+          token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+          chat = os.environ.get("TELEGRAM_CHAT_ID", "")
+          if not token or not chat:
+              print("::warning::未设置 TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID，跳过 TG 通知")
+              sys.exit(0)
+
+          def prediction(issue):
+              """topk_ledger 中该期预测; 返回 (独胆, 二码, 三码, 三码集合)"""
+              with open("main/forward/topk_ledger.csv", encoding="utf-8-sig") as f:
+                  for row in csv.DictReader(f):
+                      if row["target_issue"] == str(issue):
+                          picks = {x for x in row["top3"].split("|") if x}
+                          return (row["top1"].replace("|", "、"),
+                                  row["top2"].replace("|", "、"),
+                                  row["top3"].replace("|", "、"),
+                                  picks)
+              return "—", "—", "—", set()
+
+          def hit_count(code, picks):
+              """三码集合中实际出现的不同数字个数"""
+              return len(set(code) & picks)
+
+          def header(issue):
+              t1, t2, t3, _ = prediction(issue)
+              return (f"拼搏 {issue}期预测命中结果\n"
+                      f"独胆：{t1}\n二码：{t2}\n三码：{t3}")
+
+          messages = []
+
+          # 试机号首次入库 -> 时段一消息
+          if os.environ.get("FILLED_SJ", "0") != "0" and os.environ.get("SJCODE"):
+              issue, code = os.environ["ISSUE"], os.environ["SJCODE"]
+              picks = prediction(issue)[3]
+              messages.append(f"{header(issue)}\n\n拼搏试机号：{code}\n命中：{hit_count(code, picks)}码")
+
+          # 开奖号首次入库 -> 时段二消息（取主表中最新一条已开奖记录）
+          if os.environ.get("FILLED_KJ", "0") != "0":
+              with open("main/data/k3_full_history.csv", encoding="utf-8-sig") as f:
+                  for row in csv.DictReader(f):  # 主表按期号倒序
+                      code = row["KaiJiang"].strip()
+                      if code:
+                          issue = row["Issue"]
+                          picks = prediction(issue)[3]
+                          messages.append(f"{header(issue)}\n\n福彩开奖号：{code}\n命中：{hit_count(code, picks)}码")
+                          break
+
+          for msg in messages:
+              resp = requests.post(
+                  f"https://api.telegram.org/bot{token}/sendMessage",
+                  json={"chat_id": chat, "text": msg},
+                  timeout=15,
+              )
+              resp.raise_for_status()
+              print("TG 已发送:", msg.replace("\n", " / "))
+          PY
 
       - name: 心跳(防 schedule 休眠)
         if: always()
