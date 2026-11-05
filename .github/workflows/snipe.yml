@@ -30,6 +30,8 @@ jobs:
       PINBLE_GLOBAL_ID: ${{ secrets.PINBLE_GLOBAL_ID }}
       PINBLE_GLOBAL_VD: ${{ secrets.PINBLE_GLOBAL_VD }}
       PINBLE_GLOBAL_UD: ${{ secrets.PINBLE_GLOBAL_UD }}
+      # 福彩3D + 排列3 试机号北京时间 17:00 同步发布, 同一轮询循环内探测两 feed
+      PINBLE_LOTTERY_ID: "11000130,21000230"
       LOOP: ${{ github.event.inputs.loop_minutes || '0' }}
 
     steps:
@@ -70,7 +72,7 @@ jobs:
           cd main
           git config user.name "sjh-sniper[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/snipe_log.csv data/snipe_events.jsonl data/state.json
+          git add data/snipe_log*.csv data/snipe_events*.jsonl data/state*.json
           if git diff --cached --quiet; then
             echo "无变更，跳过提交"
             exit 0
