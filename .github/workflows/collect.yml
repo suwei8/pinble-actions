@@ -84,7 +84,7 @@ jobs:
             echo "本次无数据变更，跳过提交"
             exit 0
           fi
-          git commit -m "data: 增量采集 (试机号 ${{ steps.collect.outputs.issue }}=${{ steps.collect.outputs.sjcode }} / 新增 ${{ steps.collect.outputs.added }} 期 / 补开奖号 ${{ steps.collect.outputs.filled_kj }} 期)"
+          git commit -m "data: 增量采集 (3D试机号 ${{ steps.collect.outputs.issue }}=${{ steps.collect.outputs.sjcode }} / P3试机号 ${{ steps.collect.outputs.p3_issue }}=${{ steps.collect.outputs.p3_sjcode }} / 3D新增${{ steps.collect.outputs.added }} P3新增${{ steps.collect.outputs.p3_added }} / 补开奖号 3D:${{ steps.collect.outputs.filled_kj }} P3:${{ steps.collect.outputs.p3_filled_kj }})"
           for i in 1 2 3; do
             if git pull --rebase origin main && git push; then
               if [ "$master_updated" = true ]; then
