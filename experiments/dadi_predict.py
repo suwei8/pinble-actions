@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""直选大底实验·单维度预测器:每个 runner(--dim 1..20)输出 top-60 直选。
+"""直选大底实验·单维度预测器:每个 runner(--dim 1..20)输出 top-100 直选。
 
 20 个维度各自独立打分:
   1-4   数字集合频率   W150/300/800/2000
@@ -117,7 +117,7 @@ def main():
     dims = build_dims(draws)
     name, fn = dims[a.dim]
     ranked = sorted(PERMS, key=lambda p: (-fn(p), p))
-    top = ranked[:60]
+    top = ranked[:100]
     with open(a.out, "w", encoding="utf-8") as f:
         f.write(f"# dim{a.dim} {name}\n")
         for p in top:

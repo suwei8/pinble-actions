@@ -107,7 +107,7 @@ def main():
     done = [] if a.no_ledger else [r for r in ledger if r["status"] == "settled"]
     nh = sum(1 for r in done if r["hit"] == "1")
     msg = f"拼搏 {target}期 直选大底实验(福彩3D)\n"
-    msg += f"20维runner×60注 → 杀号并集 {len(kill)} 注 → 大底 {len(pool)} 注\n"
+    msg += f"20维runner×100注 → 杀号并集 {len(kill)} 注 → 大底 {len(pool)} 注\n"
     if settled_now:
         msg += (f"上期结算:{settled_now['target_issue']}期 实际 {settled_now['actual']} "
                 f"→ {'命中' if settled_now['hit'] == '1' else '未中'}\n")
