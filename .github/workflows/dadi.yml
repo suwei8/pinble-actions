@@ -1,0 +1,102 @@
+name: 直选大底实验(20维杀号)
+
+on:
+  schedule:
+    # 北京 16:00 — 试机号发布(~17:00)前预注册,目标 = 当晚新期
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # 聚合任务回写账本到本仓
+
+concurrency:
+  group: dadi-experiment
+  cancel-in-progress: false
+
+jobs:
+  predict:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        dim: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+    steps:
+      - name: 检出本仓(预测脚本)
+        uses: actions/checkout@v5
+
+      - name: 检出数据仓
+        uses: actions/checkout@v5
+        with:
+          repository: suwei8/pinble-data
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+          path: main
+          ref: main
+
+      - name: 安装 Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: 维度${{ matrix.dim }} → top-40 直选
+        run: python experiments/dadi_predict.py --dim ${{ matrix.dim }} --csv main/data/k3_full_history.csv --out pred_${{ matrix.dim }}.txt
+
+      - name: 上传预测
+        uses: actions/upload-artifact@v4
+        with:
+          name: pred-${{ matrix.dim }}
+          path: pred_${{ matrix.dim }}.txt
+          retention-days: 14
+
+  aggregate:
+    needs: predict
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出本仓(账本)
+        uses: actions/checkout@v5
+
+      - name: 检出数据仓(结算用)
+        uses: actions/checkout@v5
+        with:
+          repository: suwei8/pinble-data
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+          path: main
+          ref: main
+
+      - name: 安装 Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: 安装依赖
+        run: pip install requests
+
+      - name: 收齐 20 个 runner 预测
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pred-*
+          path: preds
+          merge-multiple: true
+
+      - name: 聚合杀号 + 结算 + TG 推送
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python experiments/dadi_aggregate.py --csv main/data/k3_full_history.csv --preds preds
+
+      - name: 回写账本
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add experiments/
+          if git diff --cached --quiet; then
+            echo "账本无变化"
+            exit 0
+          fi
+          git commit -m "dadi: 直选大底实验 预测+结算"
+          for i in 1 2 3; do
+            git pull --rebase origin main && git push && exit 0
+            sleep $((i * 10))
+          done
+          exit 1
