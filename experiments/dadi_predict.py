@@ -122,7 +122,8 @@ def main():
         f.write(f"# dim{a.dim} {name}\n")
         for p in top:
             f.write("".join(map(str, p)) + "\n")
-    print(f"dim{a.dim} {name}: top5={[''.join(map(str,p)) for p in top[:5]]}")
+    print(f"dim{a.dim} {name} 共{len(top)}注:")
+    print(" ".join("".join(map(str, p)) for p in top))
 
 if __name__ == "__main__":
     main()
