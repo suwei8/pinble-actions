@@ -1,0 +1,138 @@
+name: 大模型直选大底实验(40维提示词·Kilo)
+
+on:
+  schedule:
+    # 北京 16:20 — 与 dadi 算法版(16:00)错开,同目标=当晚新期,方便两路对照
+    - cron: '20 8 * * *'
+  workflow_dispatch:
+    inputs:
+      csv:
+        description: 测试CSV路径(留空=数据仓主表;盲测填 experiments/test_data/xxx.csv)
+        required: false
+        default: ''
+      actual:
+        description: 已知实际号(盲测判决;留空=正式预测模式)
+        required: false
+        default: ''
+
+env:
+  # Kilo 免费模型(免登录);换模型只改这一处
+  KILO_MODEL: kilo/nvidia/nemotron-3-ultra-550b-a55b:free
+
+permissions:
+  contents: write   # 聚合任务回写账本到本仓
+
+concurrency:
+  group: kilo-experiment
+  cancel-in-progress: false
+
+jobs:
+  predict:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        dim: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+              21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40]
+    steps:
+      - name: 检出本仓(预测脚本)
+        uses: actions/checkout@v5
+
+      - name: 检出数据仓(盲测模式跳过——runner磁盘上不放真实数据)
+        if: github.event.inputs.csv == ''
+        uses: actions/checkout@v5
+        with:
+          repository: suwei8/pinble-data
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+          path: main
+          ref: main
+
+      - name: 安装 Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 安装 Kilo Code CLI
+        run: |
+          npm install -g @kilocode/cli
+          kilo --version
+
+      - name: 维度${{ matrix.dim }} → top-40 直选(LLM)
+        run: |
+          CSV="${{ github.event.inputs.csv }}"
+          [ -z "$CSV" ] && CSV="main/data/k3_full_history.csv"
+          python experiments/kilo_predict.py --dim ${{ matrix.dim }} --csv "$CSV" \
+            --out pred_${{ matrix.dim }}.txt --model "$KILO_MODEL"
+
+      - name: 上传预测
+        uses: actions/upload-artifact@v4
+        with:
+          name: pred-${{ matrix.dim }}
+          path: pred_${{ matrix.dim }}.txt
+          retention-days: 14
+
+  aggregate:
+    needs: predict
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出本仓(账本)
+        uses: actions/checkout@v5
+
+      - name: 检出数据仓(结算用;盲测模式跳过)
+        if: github.event.inputs.csv == ''
+        uses: actions/checkout@v5
+        with:
+          repository: suwei8/pinble-data
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+          path: main
+          ref: main
+
+      - name: 安装 Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: 安装依赖
+        run: pip install requests
+
+      - name: 收齐 40 个 runner 预测
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pred-*
+          path: preds
+          merge-multiple: true
+
+      - name: 聚合杀号 + 结算 + TG 推送
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          CSV="${{ github.event.inputs.csv }}"
+          [ -z "$CSV" ] && CSV="main/data/k3_full_history.csv"
+          ACT="${{ github.event.inputs.actual }}"
+          EXTRA=""
+          [ -n "$ACT" ] && EXTRA="--actual $ACT --no-ledger"
+          python experiments/kilo_aggregate.py --csv "$CSV" --preds preds --model "$KILO_MODEL" $EXTRA
+
+      - name: 回写账本
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add experiments/
+          if git diff --cached --quiet; then
+            echo "账本无变化"
+            exit 0
+          fi
+          git commit -m "kilo: 大模型直选大底实验 预测+结算"
+          for i in 1 2 3; do
+            git pull --rebase origin main && git push && exit 0
+            sleep $((i * 10))
+          done
+          exit 1
