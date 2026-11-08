@@ -34,7 +34,8 @@ jobs:
       - name: 检出本仓(预测脚本)
         uses: actions/checkout@v5
 
-      - name: 检出数据仓
+      - name: 检出数据仓(盲测模式跳过——runner磁盘上不放真实数据)
+        if: github.event.inputs.csv == ''
         uses: actions/checkout@v5
         with:
           repository: suwei8/pinble-data
@@ -68,7 +69,8 @@ jobs:
       - name: 检出本仓(账本)
         uses: actions/checkout@v5
 
-      - name: 检出数据仓(结算用)
+      - name: 检出数据仓(结算用;盲测模式跳过)
+        if: github.event.inputs.csv == ''
         uses: actions/checkout@v5
         with:
           repository: suwei8/pinble-data
