@@ -1,4 +1,4 @@
-name: 直选大底实验(20维杀号)
+name: 直选大底实验(40维杀号)
 
 on:
   schedule:
@@ -29,7 +29,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        dim: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+        dim: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+              21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40]
     steps:
       - name: 检出本仓(预测脚本)
         uses: actions/checkout@v5
@@ -86,7 +87,7 @@ jobs:
       - name: 安装依赖
         run: pip install requests
 
-      - name: 收齐 20 个 runner 预测
+      - name: 收齐 40 个 runner 预测
         uses: actions/download-artifact@v4
         with:
           pattern: pred-*

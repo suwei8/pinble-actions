@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """直选大底实验·聚合器:
-1. 收齐 preds/*.txt 20个runner预测 → 并集 = 杀号
+1. 收齐 preds/*.txt 40个runner预测 → 并集 = 杀号
 2. 残余 = 大底,写 pools/{target}.txt
 3. 结算账本中 pending 行 vs 最新试机号
 4. TG 推送结果
@@ -107,7 +107,7 @@ def main():
     done = [] if a.no_ledger else [r for r in ledger if r["status"] == "settled"]
     nh = sum(1 for r in done if r["hit"] == "1")
     msg = f"拼搏 {target}期 直选大底实验(福彩3D)\n"
-    msg += f"20维runner×100注 → 杀号并集 {len(kill)} 注 → 大底 {len(pool)} 注\n"
+    msg += f"40维runner×40注 → 杀号并集 {len(kill)} 注 → 大底 {len(pool)} 注\n"
     if settled_now:
         msg += (f"上期结算:{settled_now['target_issue']}期 实际 {settled_now['actual']} "
                 f"→ {'命中' if settled_now['hit'] == '1' else '未中'}\n")
