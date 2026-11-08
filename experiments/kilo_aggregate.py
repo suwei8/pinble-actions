@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""大模型直选大底实验·聚合器:
-1. 收齐 preds/*.txt 40个runner预测 → 并集 = 杀号
-2. 残余 = 大底,写 pools_kilo/{target}.txt
+"""大模型直选大底实验·聚合器(正向模式):
+1. 收齐 preds/*.txt 40个runner预测 → 并集 = 大底(模型选什么就要什么)
+2. 大底写 pools_kilo/{target}.txt;其余号码视为排除
 3. 结算账本中 pending 行 vs 最新试机号
 4. TG 推送结果
 """
@@ -71,15 +71,16 @@ def main():
     latest = max(actual_map)
     target = next_issue(latest)
 
-    kill = set()
+    union = set()
     files = sorted(glob.glob(os.path.join(a.preds, "*.txt")))
     for p in files:
         for line in open(p, encoding="utf-8"):
             line = line.strip()
             if len(line) == 3 and line.isdigit():
-                kill.add(line)
-    pool = sorted(ALL - kill)
-    print(f"runner预测文件 {len(files)} 个,杀号并集 {len(kill)} 注,大底 {len(pool)} 注")
+                union.add(line)
+    pool = sorted(union)          # 正向:预测并集 = 大底
+    kill = ALL - union            # 其余号码视为排除
+    print(f"runner预测文件 {len(files)} 个,预测并集 {len(pool)} 注(=大底),排除 {len(kill)} 注")
 
     # 结算(盲测模式跳过账本)
     ledger = read_ledger()
@@ -101,16 +102,16 @@ def main():
                        "status": "pending", "actual": "", "hit": ""})
         os.makedirs(POOLS, exist_ok=True)
         with open(os.path.join(POOLS, f"{target}.txt"), "w", encoding="utf-8") as f:
-            f.write(f"# {target}期大模型直选大底 生成{gen} 杀号{len(kill)}注 大底{len(pool)}注\n")
+            f.write(f"# {target}期大模型直选大底(正向) 生成{gen} 预测并集{len(pool)}注=大底 排除{len(kill)}注\n")
             f.write("\n".join(pool) + "\n")
         write_ledger(ledger)
 
     done = [] if a.no_ledger else [r for r in ledger if r["status"] == "settled"]
     nh = sum(1 for r in done if r["hit"] == "1")
-    msg = f"拼搏 {target}期 大模型直选大底实验(福彩3D)\n"
+    msg = f"拼搏 {target}期 大模型直选大底实验·正向(福彩3D)\n"
     if a.model:
         msg += f"模型 {a.model}\n"
-    msg += f"40维提示词runner×40注 → 杀号并集 {len(kill)} 注 → 大底 {len(pool)} 注\n"
+    msg += f"40维提示词runner → 预测并集 {len(pool)} 注 = 大底(排除 {len(kill)} 注)\n"
     if settled_now:
         msg += (f"上期结算:{settled_now['target_issue']}期 实际 {settled_now['actual']} "
                 f"→ {'命中' if settled_now['hit'] == '1' else '未中'}\n")

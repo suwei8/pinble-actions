@@ -1,4 +1,4 @@
-name: 大模型直选大底实验(40维提示词·Kilo)
+name: 大模型直选大底实验(40维提示词·Kilo·正向)
 
 on:
   schedule:
