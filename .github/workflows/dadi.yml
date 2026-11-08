@@ -5,6 +5,15 @@ on:
     # 北京 16:00 — 试机号发布(~17:00)前预注册,目标 = 当晚新期
     - cron: '0 8 * * *'
   workflow_dispatch:
+    inputs:
+      csv:
+        description: 测试CSV路径(留空=数据仓主表;盲测填 experiments/test_data/xxx.csv)
+        required: false
+        default: ''
+      actual:
+        description: 已知实际号(盲测判决;留空=正式预测模式)
+        required: false
+        default: ''
 
 permissions:
   contents: write   # 聚合任务回写账本到本仓
@@ -39,7 +48,10 @@ jobs:
           python-version: '3.12'
 
       - name: 维度${{ matrix.dim }} → top-40 直选
-        run: python experiments/dadi_predict.py --dim ${{ matrix.dim }} --csv main/data/k3_full_history.csv --out pred_${{ matrix.dim }}.txt
+        run: |
+          CSV="${{ github.event.inputs.csv }}"
+          [ -z "$CSV" ] && CSV="main/data/k3_full_history.csv"
+          python experiments/dadi_predict.py --dim ${{ matrix.dim }} --csv "$CSV" --out pred_${{ matrix.dim }}.txt
 
       - name: 上传预测
         uses: actions/upload-artifact@v4
@@ -83,7 +95,13 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python experiments/dadi_aggregate.py --csv main/data/k3_full_history.csv --preds preds
+        run: |
+          CSV="${{ github.event.inputs.csv }}"
+          [ -z "$CSV" ] && CSV="main/data/k3_full_history.csv"
+          ACT="${{ github.event.inputs.actual }}"
+          EXTRA=""
+          [ -n "$ACT" ] && EXTRA="--actual $ACT --no-ledger"
+          python experiments/dadi_aggregate.py --csv "$CSV" --preds preds $EXTRA
 
       - name: 回写账本
         run: |

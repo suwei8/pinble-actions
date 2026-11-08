@@ -62,6 +62,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--csv", required=True)
     ap.add_argument("--preds", required=True)
+    ap.add_argument("--actual", default="")          # 盲测判决用的已知实际号
+    ap.add_argument("--no-ledger", action="store_true")  # 盲测模式:不写账本/池文件
     a = ap.parse_args()
 
     actual_map = load_csv(a.csv)
@@ -78,30 +80,31 @@ def main():
     pool = sorted(ALL - kill)
     print(f"runner预测文件 {len(files)} 个,杀号并集 {len(kill)} 注,大底 {len(pool)} 注")
 
-    # 结算
+    # 结算(盲测模式跳过账本)
     ledger = read_ledger()
     settled_now = None
-    for row in ledger:
-        if row["status"] == "pending" and int(row["target_issue"]) in actual_map:
-            act = actual_map[int(row["target_issue"])]
-            row["actual"] = act
-            row["hit"] = "1" if act in load_pool(int(row["target_issue"])) else "0"
-            row["status"] = "settled"
-            settled_now = row
+    if not a.no_ledger:
+        for row in ledger:
+            if row["status"] == "pending" and int(row["target_issue"]) in actual_map:
+                act = actual_map[int(row["target_issue"])]
+                row["actual"] = act
+                row["hit"] = "1" if act in load_pool(int(row["target_issue"])) else "0"
+                row["status"] = "settled"
+                settled_now = row
 
-    # 本期行:同日重跑则覆盖
-    gen = datetime.now(BJ).strftime("%Y-%m-%d %H:%M:%S")
-    ledger = [r for r in ledger if not (r["target_issue"] == str(target) and r["status"] == "pending")]
-    ledger.append({"target_issue": str(target), "generated_at": gen,
-                   "kill_n": str(len(kill)), "pool_n": str(len(pool)),
-                   "status": "pending", "actual": "", "hit": ""})
-    os.makedirs(POOLS, exist_ok=True)
-    with open(os.path.join(POOLS, f"{target}.txt"), "w", encoding="utf-8") as f:
-        f.write(f"# {target}期直选大底 生成{gen} 杀号{len(kill)}注 大底{len(pool)}注\n")
-        f.write("\n".join(pool) + "\n")
-    write_ledger(ledger)
+        # 本期行:同日重跑则覆盖
+        gen = datetime.now(BJ).strftime("%Y-%m-%d %H:%M:%S")
+        ledger = [r for r in ledger if not (r["target_issue"] == str(target) and r["status"] == "pending")]
+        ledger.append({"target_issue": str(target), "generated_at": gen,
+                       "kill_n": str(len(kill)), "pool_n": str(len(pool)),
+                       "status": "pending", "actual": "", "hit": ""})
+        os.makedirs(POOLS, exist_ok=True)
+        with open(os.path.join(POOLS, f"{target}.txt"), "w", encoding="utf-8") as f:
+            f.write(f"# {target}期直选大底 生成{gen} 杀号{len(kill)}注 大底{len(pool)}注\n")
+            f.write("\n".join(pool) + "\n")
+        write_ledger(ledger)
 
-    done = [r for r in ledger if r["status"] == "settled"]
+    done = [] if a.no_ledger else [r for r in ledger if r["status"] == "settled"]
     nh = sum(1 for r in done if r["hit"] == "1")
     msg = f"拼搏 {target}期 直选大底实验(福彩3D)\n"
     msg += f"20维runner×40注 → 杀号并集 {len(kill)} 注 → 大底 {len(pool)} 注\n"
@@ -110,6 +113,11 @@ def main():
                 f"→ {'命中' if settled_now['hit'] == '1' else '未中'}\n")
     if done:
         msg += f"累计:{nh}/{len(done)} 命中({nh / len(done) * 100:.0f}%)\n"
+    if a.actual:
+        in_pool = a.actual in pool
+        verdict = "命中大底" if in_pool else "被杀号杀掉"
+        msg += (f"盲测判决:{target}期实际 {a.actual} → {verdict}"
+                f"(大底{len(pool)}注,随机基线{len(pool)/10:.0f}%)\n")
     msg += "大底:\n" + " ".join(pool)
     print(msg[:500] + ("..." if len(msg) > 500 else ""))
 
