@@ -4,10 +4,13 @@
 
 40 个维度与 dadi_predict.py 一一对应,只是把统计打分换成 LLM 推理,
 便于与算法版大底做同期对照实验。
-"""
-import argparse, csv, re, subprocess, sys, tempfile
 
-EXCLUDE = [(2002001, 2002070), (2002110, 2002179)]  # 3D 数据已知坏段
+模型可自行读取本地 CSV 历史文件(绝对路径在提示词中给出),并可运行
+命令/脚本自行统计——提示词只给维度方向和输出契约,不内嵌数据。
+"""
+import argparse, os, re, shutil, subprocess, sys, tempfile
+
+BAD_SEGMENTS = "2002001-2002070、2002110-2002179"  # 3D 数据已知坏段
 
 DIMS = {
     1:  ("数字频率·近150期", "统计最近150期内各数字(0-9)的出现频率(不限位置),优先挑选由高频数字组成的直选"),
@@ -52,62 +55,18 @@ DIMS = {
     40: ("上期数字回避", "尽量不使用上一期出现过的数字,选与上期数字交集最小的注"),
 }
 
-def load(path):
-    rows = []
-    with open(path, encoding="utf-8-sig") as f:
-        for r in csv.DictReader(f):
-            s = r["ShiJiHao"].strip()
-            if len(s) == 3 and s.isdigit():
-                iss = int(r["Issue"])
-                if not any(a <= iss <= b for a, b in EXCLUDE):
-                    rows.append((iss, s))
-    rows.sort()
-    return rows
-
-def digit_freq(draws, W):
-    seg = draws[-W:]
-    n = len(seg)
-    return {d: sum(1 for s in seg if d in s) / n for d in range(10)}
-
-def pos_freq(draws, W):
-    seg = draws[-W:]
-    n = len(seg)
-    return [{d: sum(1 for s in seg if s[p] == d) / n for d in range(10)} for p in range(3)]
-
-def digit_gaps(draws):
-    return {d: next((i for i, s in enumerate(reversed(draws)) if d in s), len(draws))
-            for d in range(10)}
-
-def stats_block(draws):
-    out = ["\n附:程序预统计(%,数字频率=含该数字的期数占比):"]
-    for W in (150, 300, 800, 2000):
-        if len(draws) >= W:
-            fr = digit_freq(draws, W)
-            out.append(f"数字频率W{W}: " + " ".join(f"{d}:{fr[d] * 100:.0f}" for d in range(10)))
-    if len(draws) >= 300:
-        pf = pos_freq(draws, 300)
-        for p, nm in enumerate("百十个"):
-            out.append(f"{nm}位频率W300: " + " ".join(f"{d}:{pf[p][d] * 100:.0f}" for d in range(10)))
-    return "\n".join(out)
-
-def build_prompt(dim, rows):
+def build_prompt(dim, csv_abs):
     name, ins = DIMS[dim]
-    draws = [tuple(int(c) for c in s) for _, s in rows]
-    recent = rows[-100:]
-    hist = "\n".join(f"{iss} {s}" for iss, s in recent)
-    g = digit_gaps(draws)
-    return f"""你是福彩3D试机号直选分析师。以下是最近{len(recent)}期历史(每行:期号 三位直选,最新一期在最后):
-{hist}
-{stats_block(draws)}
-上一期:{rows[-1][0]}期 开出 {rows[-1][1]}
-各数字当前遗漏期数: {' '.join(f'{d}:{g[d]}' for d in range(10))}
+    return f"""你是福彩3D试机号直选分析师。历史开奖数据在本地文件 {csv_abs}
+(CSV格式,含列 Issue=期号, ShiJiHao=三位直选号码,按时间顺序排列)。
+请用工具自行读取该文件;如需统计,也可以运行命令或脚本计算。
+注意:期号段 {BAD_SEGMENTS} 为已知坏数据,统计时请剔除。
 
 本期分析维度「{name}」:{ins}。
-请只基于上面给出的数据,按该维度推断下一期最可能开出的直选。
+请基于文件中的全部历史数据,按该维度推断下一期最可能开出的直选。
 
 输出要求:
-- 不要使用任何工具,不要读写文件,直接推理
-- 分析过程不超过3行,然后单独输出一行 =====
+- 最终回复中分析过程不超过3行,然后单独输出一行 =====
 - 分隔线之后恰好输出40注,每行一注三位有序数字(000-999),不带编号或其它字符"""
 
 def extract(text):
@@ -128,8 +87,13 @@ def extract(text):
     nums = scan(tail) or scan(lines)
     return list(dict.fromkeys(nums))[:40]
 
-def call_kilo(model, prompt, timeout_s):
+def call_kilo(model, dim, csv_abs, timeout_s):
+    # 临时工作目录:CSV 拷进去供模型读取,模型产生的临时文件也落在这里,
+    # 不污染仓库(避免被 aggregate 的 git add experiments/ 误提交)
     with tempfile.TemporaryDirectory() as td:
+        local = os.path.join(td, "history.csv")
+        shutil.copy2(csv_abs, local)
+        prompt = build_prompt(dim, local)
         return subprocess.run(
             ["kilo", "run", "--auto", "--pure", "-m", model, prompt],
             capture_output=True, text=True, cwd=td, timeout=timeout_s)
@@ -142,14 +106,15 @@ def main():
     ap.add_argument("--model", default="kilo/nvidia/nemotron-3-ultra-550b-a55b:free")
     ap.add_argument("--timeout", type=int, default=420)
     a = ap.parse_args()
-    rows = load(a.csv)
+    csv_abs = os.path.abspath(a.csv)
+    if not os.path.isfile(csv_abs):
+        sys.exit(f"CSV 不存在: {csv_abs}")
     name, _ = DIMS[a.dim]
-    prompt = build_prompt(a.dim, rows)
 
     nums, err = [], ""
     for attempt in (1, 2):
         try:
-            p = call_kilo(a.model, prompt, a.timeout)
+            p = call_kilo(a.model, a.dim, csv_abs, a.timeout)
         except subprocess.TimeoutExpired:
             err = f"timeout {a.timeout}s"
             continue
@@ -157,12 +122,17 @@ def main():
         if p.returncode != 0:
             err = f"kilo exit {p.returncode}: {text[-200:]}"
             continue
-        nums = extract(text)
-        if nums:
+        got = extract(text)
+        if not got:
+            err = "no picks parsed"
+            continue
+        nums = list(dict.fromkeys(nums + got))  # 模型可能少给,跨次合并补足
+        if len(nums) >= 40:
             break
-        err = "no picks parsed"
-    if not nums and err:
-        print(f"dim{a.dim} {name} 两次尝试失败: {err}", file=sys.stderr)
+        err = f"only {len(nums)} picks"
+    nums = nums[:40]
+    if len(nums) < 40:
+        print(f"dim{a.dim} {name} 仅 {len(nums)} 注({err})", file=sys.stderr)
 
     with open(a.out, "w", encoding="utf-8") as f:
         f.write(f"# dim{a.dim} {name} model={a.model} n={len(nums)}\n")
