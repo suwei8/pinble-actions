@@ -87,12 +87,24 @@ def extract(text):
     nums = scan(tail) or scan(lines)
     return list(dict.fromkeys(nums))[:40]
 
-def call_kilo(model, dim, csv_abs, timeout_s):
+def call_kilo(model, dim, csv_abs, upto, timeout_s):
     # 临时工作目录:CSV 拷进去供模型读取,模型产生的临时文件也落在这里,
     # 不污染仓库(避免被 aggregate 的 git add experiments/ 误提交)
     with tempfile.TemporaryDirectory() as td:
         local = os.path.join(td, "history.csv")
-        shutil.copy2(csv_abs, local)
+        if upto > 0:
+            # 盲测:必须先截断再交给模型,防止看到未来数据(泄漏)
+            with open(csv_abs, encoding="utf-8-sig") as fi, \
+                 open(local, "w", encoding="utf-8", newline="") as fo:
+                for i, line in enumerate(fi):
+                    if i == 0:
+                        fo.write(line)
+                        continue
+                    iss = line.split(",", 1)[0].strip().strip('"')
+                    if iss.isdigit() and int(iss) <= upto:
+                        fo.write(line)
+        else:
+            shutil.copy2(csv_abs, local)
         prompt = build_prompt(dim, local)
         return subprocess.run(
             ["kilo", "run", "--auto", "--pure", "-m", model, prompt],
@@ -105,6 +117,7 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--model", default="kilo/nvidia/nemotron-3-ultra-550b-a55b:free")
     ap.add_argument("--timeout", type=int, default=420)
+    ap.add_argument("--upto", type=int, default=0)      # 盲测:只保留期号<=upto的行
     a = ap.parse_args()
     csv_abs = os.path.abspath(a.csv)
     if not os.path.isfile(csv_abs):
@@ -114,7 +127,7 @@ def main():
     nums, err = [], ""
     for attempt in (1, 2):
         try:
-            p = call_kilo(a.model, a.dim, csv_abs, a.timeout)
+            p = call_kilo(a.model, a.dim, csv_abs, a.upto, a.timeout)
         except subprocess.TimeoutExpired:
             err = f"timeout {a.timeout}s"
             continue

@@ -14,6 +14,10 @@ on:
         description: 已知实际号(盲测判决;留空=正式预测模式)
         required: false
         default: ''
+      upto:
+        description: 盲测数据截止期号(只给模型看<=该期的数据;留空=不过滤)
+        required: false
+        default: ''
 
 env:
   # Kilo 免费模型(免登录);换模型只改这一处
@@ -69,8 +73,10 @@ jobs:
         run: |
           CSV="${{ github.event.inputs.csv }}"
           [ -z "$CSV" ] && CSV="main/data/k3_full_history.csv"
+          UPTO="${{ github.event.inputs.upto }}"
+          [ -z "$UPTO" ] && UPTO=0
           python experiments/kilo_predict.py --dim ${{ matrix.dim }} --csv "$CSV" \
-            --out pred_${{ matrix.dim }}.txt --model "$KILO_MODEL"
+            --out pred_${{ matrix.dim }}.txt --model "$KILO_MODEL" --upto "$UPTO"
 
       - name: 上传预测
         uses: actions/upload-artifact@v4
@@ -119,9 +125,12 @@ jobs:
           CSV="${{ github.event.inputs.csv }}"
           [ -z "$CSV" ] && CSV="main/data/k3_full_history.csv"
           ACT="${{ github.event.inputs.actual }}"
+          UPTO="${{ github.event.inputs.upto }}"
+          [ -z "$UPTO" ] && UPTO=0
           EXTRA=""
           [ -n "$ACT" ] && EXTRA="--actual $ACT --no-ledger"
-          python experiments/kilo_aggregate.py --csv "$CSV" --preds preds --model "$KILO_MODEL" --pool-n "$KILO_POOL_N" $EXTRA
+          python experiments/kilo_aggregate.py --csv "$CSV" --preds preds --model "$KILO_MODEL" \
+            --pool-n "$KILO_POOL_N" --upto "$UPTO" $EXTRA
 
       - name: 回写账本
         run: |

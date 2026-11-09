@@ -66,9 +66,12 @@ def main():
     ap.add_argument("--actual", default="")             # 盲测判决用的已知实际号
     ap.add_argument("--no-ledger", action="store_true") # 盲测模式:不写账本/池文件
     ap.add_argument("--pool-n", type=int, default=100)  # 大底目标注数(加权得分top-N)
+    ap.add_argument("--upto", type=int, default=0)      # 盲测:只认期号<=upto的数据
     a = ap.parse_args()
 
     actual_map = load_csv(a.csv)
+    if a.upto > 0:
+        actual_map = {k: v for k, v in actual_map.items() if k <= a.upto}
     latest = max(actual_map)
     target = next_issue(latest)
 
