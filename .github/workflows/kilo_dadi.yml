@@ -18,6 +18,8 @@ on:
 env:
   # Kilo 免费模型(免登录);换模型只改这一处
   KILO_MODEL: kilo/nvidia/nemotron-3-ultra-550b-a55b:free
+  # 大底目标注数(加权得分top-N);调大小改这一处
+  KILO_POOL_N: '100'
 
 permissions:
   contents: write   # 聚合任务回写账本到本仓
@@ -119,7 +121,7 @@ jobs:
           ACT="${{ github.event.inputs.actual }}"
           EXTRA=""
           [ -n "$ACT" ] && EXTRA="--actual $ACT --no-ledger"
-          python experiments/kilo_aggregate.py --csv "$CSV" --preds preds --model "$KILO_MODEL" $EXTRA
+          python experiments/kilo_aggregate.py --csv "$CSV" --preds preds --model "$KILO_MODEL" --pool-n "$KILO_POOL_N" $EXTRA
 
       - name: 回写账本
         run: |

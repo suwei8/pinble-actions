@@ -65,7 +65,7 @@ def main():
     ap.add_argument("--model", default="")              # 模型名,仅用于消息展示
     ap.add_argument("--actual", default="")             # 盲测判决用的已知实际号
     ap.add_argument("--no-ledger", action="store_true") # 盲测模式:不写账本/池文件
-    ap.add_argument("--pool-n", type=int, default=275)  # 大底目标注数(加权得分top-N)
+    ap.add_argument("--pool-n", type=int, default=100)  # 大底目标注数(加权得分top-N)
     a = ap.parse_args()
 
     actual_map = load_csv(a.csv)
