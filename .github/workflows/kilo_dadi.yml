@@ -18,6 +18,10 @@ on:
         description: 盲测数据截止期号(只给模型看<=该期的数据;留空=不过滤)
         required: false
         default: ''
+      pooln:
+        description: 大底注数覆盖(留空=用KILO_POOL_N默认值)
+        required: false
+        default: ''
 
 env:
   # Kilo 免费模型(免登录);换模型只改这一处
@@ -127,10 +131,12 @@ jobs:
           ACT="${{ github.event.inputs.actual }}"
           UPTO="${{ github.event.inputs.upto }}"
           [ -z "$UPTO" ] && UPTO=0
+          PN="${{ github.event.inputs.pooln }}"
+          [ -z "$PN" ] && PN="$KILO_POOL_N"
           EXTRA=""
           [ -n "$ACT" ] && EXTRA="--actual $ACT --no-ledger"
           python experiments/kilo_aggregate.py --csv "$CSV" --preds preds --model "$KILO_MODEL" \
-            --pool-n "$KILO_POOL_N" --upto "$UPTO" $EXTRA
+            --pool-n "$PN" --upto "$UPTO" $EXTRA
 
       - name: 回写账本
         run: |
