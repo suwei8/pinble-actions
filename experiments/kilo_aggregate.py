@@ -123,10 +123,12 @@ def main():
     if done:
         msg += f"累计:{nh}/{len(done)} 命中({nh / len(done) * 100:.0f}%)\n"
     if a.actual:
-        in_pool = a.actual in pool
-        verdict = "命中大底" if in_pool else "被杀号杀掉"
-        msg += (f"盲测判决:{target}期实际 {a.actual} → {verdict}"
-                f"(大底{len(pool)}注,随机基线{len(pool) / 10:.0f}%)\n")
+        for N in dict.fromkeys([a.pool_n, 275]):   # 主口径 + top275 对照口径
+            eff = min(N, len(ranked))
+            s = set(ranked[:N])
+            verdict = "命中大底" if a.actual in s else "未中"
+            msg += (f"盲测判决top{eff}:{target}期实际 {a.actual} → {verdict}"
+                    f"(大底{eff}注,随机基线{eff / 10:.0f}%)\n")
     msg += "大底:\n" + " ".join(pool)
     print(msg[:500] + ("..." if len(msg) > 500 else ""))
 
