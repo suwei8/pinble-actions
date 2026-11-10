@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LEDGER = os.path.join(BASE, "experiments", "kilo_ledger.csv")
 POOLS = os.path.join(BASE, "experiments", "pools_kilo")
-FIELDS = ["target_issue", "generated_at", "kill_n", "pool_n", "status", "actual", "hit"]
+FIELDS = ["target_issue", "generated_at", "kill_n", "pool_n", "status", "actual", "hit", "actual_rank"]
 ALL = {"".join(map(str, p)) for p in itertools.product(range(10), repeat=3)}
 EXCLUDE = [(2002001, 2002070), (2002110, 2002179)]
 BJ = ZoneInfo("Asia/Shanghai")
@@ -50,6 +50,20 @@ def load_pool(issue):
     if not os.path.exists(p):
         return set()
     return {x.strip() for x in open(p, encoding="utf-8") if x.strip() and not x.startswith("#")}
+
+def load_ranked(issue):
+    # {issue}_ranked.txt: 按加权得分降序的全量并集,供结算时算 actual 名次
+    p = os.path.join(POOLS, f"{issue}_ranked.txt")
+    if not os.path.exists(p):
+        return []
+    return [x.strip() for x in open(p, encoding="utf-8") if x.strip() and not x.startswith("#")]
+
+def naive_pool(actual_map, n):
+    # 朴素基线:近300期数字集合频率给全部1000注打分取top-n,用于同期对照
+    draws = [s for _, s in sorted(actual_map.items())][-300:]
+    fr = {d: sum(1 for s in draws if str(d) in s) / len(draws) for d in range(10)}
+    r = sorted(ALL, key=lambda p: -(fr[int(p[0])] + fr[int(p[1])] + fr[int(p[2])]))
+    return set(r[:n])
 
 def tg(token, chat, text):
     import requests
@@ -98,6 +112,8 @@ def main():
                 act = actual_map[int(row["target_issue"])]
                 row["actual"] = act
                 row["hit"] = "1" if act in load_pool(int(row["target_issue"])) else "0"
+                rk = load_ranked(int(row["target_issue"]))
+                row["actual_rank"] = str(rk.index(act) + 1) if act in rk else "out"
                 row["status"] = "settled"
                 settled_now = row
 
@@ -106,11 +122,15 @@ def main():
         ledger = [r for r in ledger if not (r["target_issue"] == str(target) and r["status"] == "pending")]
         ledger.append({"target_issue": str(target), "generated_at": gen,
                        "kill_n": str(len(kill)), "pool_n": str(len(pool)),
-                       "status": "pending", "actual": "", "hit": ""})
+                       "status": "pending", "actual": "", "hit": "", "actual_rank": ""})
         os.makedirs(POOLS, exist_ok=True)
         with open(os.path.join(POOLS, f"{target}.txt"), "w", encoding="utf-8") as f:
             f.write(f"# {target}期大模型直选大底(正向·加权top{a.pool_n}) 生成{gen} 大底{len(pool)}注 排除{len(kill)}注\n")
             f.write("\n".join(pool) + "\n")
+        # 全量名次文件:结算时用 actual_rank 记录实际号在加权榜上的位置
+        with open(os.path.join(POOLS, f"{target}_ranked.txt"), "w", encoding="utf-8") as f:
+            f.write(f"# {target}期 加权得分降序全量并集({len(ranked)}注) 生成{gen}\n")
+            f.write("\n".join(ranked) + "\n")
         write_ledger(ledger)
 
     done = [] if a.no_ledger else [r for r in ledger if r["status"] == "settled"]
@@ -122,7 +142,8 @@ def main():
             f"→ 大底 {len(pool)} 注(排除 {len(kill)} 注)\n")
     if settled_now:
         msg += (f"上期结算:{settled_now['target_issue']}期 实际 {settled_now['actual']} "
-                f"→ {'命中' if settled_now['hit'] == '1' else '未中'}\n")
+                f"→ {'命中' if settled_now['hit'] == '1' else '未中'}"
+                f"(名次{settled_now.get('actual_rank', '?')})\n")
     if done:
         msg += f"累计:{nh}/{len(done)} 命中({nh / len(done) * 100:.0f}%)\n"
     if a.actual:
@@ -132,6 +153,13 @@ def main():
             verdict = "命中大底" if a.actual in s else "未中"
             msg += (f"盲测判决top{eff}:{target}期实际 {a.actual} → {verdict}"
                     f"(大底{eff}注,随机基线{eff / 10:.0f}%)\n")
+        # 实际号在加权榜上的名次——比命中与否更细的排序质量信号
+        rk = ranked.index(a.actual) + 1 if a.actual in score else None
+        msg += f"实际号加权排名:{f'{rk}/{len(ranked)}' if rk else '未入并集'}\n"
+        # 朴素基线:近300期数字频率top-N,同期对照LLM有无增量价值
+        nb = naive_pool(actual_map, min(a.pool_n, len(ranked)))
+        msg += (f"朴素基线top{len(nb)}(近300期数字频率):{a.actual} → "
+                f"{'命中' if a.actual in nb else '未中'}\n")
     msg += "大底:\n" + " ".join(pool)
     print(msg[:500] + ("..." if len(msg) > 500 else ""))
 
