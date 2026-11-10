@@ -113,7 +113,7 @@ def main():
                 row["actual"] = act
                 row["hit"] = "1" if act in load_pool(int(row["target_issue"])) else "0"
                 rk = load_ranked(int(row["target_issue"]))
-                row["actual_rank"] = str(rk.index(act) + 1) if act in rk else "out"
+                row["actual_rank"] = str(rk.index(act) + 1) if act in rk else ("out" if rk else "")
                 row["status"] = "settled"
                 settled_now = row
 
