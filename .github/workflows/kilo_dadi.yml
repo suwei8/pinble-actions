@@ -27,7 +27,7 @@ env:
   # Kilo 免费模型(免登录);换模型只改这一处
   KILO_MODEL: kilo/nvidia/nemotron-3-ultra-550b-a55b:free
   # 大底目标注数(加权得分top-N);调大小改这一处
-  KILO_POOL_N: '100'
+  KILO_POOL_N: '350'
 
 permissions:
   contents: write   # 聚合任务回写账本到本仓
