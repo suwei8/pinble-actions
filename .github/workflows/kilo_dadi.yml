@@ -77,6 +77,12 @@ jobs:
         run: |
           CSV="${{ github.event.inputs.csv }}"
           [ -z "$CSV" ] && CSV="main/data/k3_full_history.csv"
+          if [ -n "${{ github.event.inputs.csv }}" ]; then
+            # 盲测隔离:删掉runner上其他含开奖结果/历史预测的文件,防模型越权读取
+            find experiments/test_data -name '*.csv' ! -name "$(basename "$CSV")" -delete
+            rm -rf experiments/pools experiments/pools_kilo
+            rm -f experiments/*_ledger.csv
+          fi
           UPTO="${{ github.event.inputs.upto }}"
           [ -z "$UPTO" ] && UPTO=0
           python experiments/kilo_predict.py --dim ${{ matrix.dim }} --csv "$CSV" \

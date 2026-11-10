@@ -103,6 +103,13 @@ def call_kilo(model, dim, csv_abs, upto, timeout_s):
                     iss = line.split(",", 1)[0].strip().strip('"')
                     if iss.isdigit() and int(iss) <= upto:
                         fo.write(line)
+            # kilo 的文件/网络工具不受 cwd 限制——把源 CSV 也原地截断,
+            # 让 runner 磁盘上不存在任何 >upto 的行
+            shutil.copyfile(local, csv_abs)
+            # 项目级配置:盲测禁用联网工具,防联网查历史开奖结果
+            with open(os.path.join(td, "kilo.json"), "w", encoding="utf-8") as f:
+                f.write('{"permission":{"webfetch":"deny","websearch":"deny"},'
+                        '"tools":{"webfetch":false,"websearch":false}}')
         else:
             shutil.copy2(csv_abs, local)
         prompt = build_prompt(dim, local)
@@ -132,6 +139,8 @@ def main():
             err = f"timeout {a.timeout}s"
             continue
         text = p.stdout + "\n" + p.stderr
+        # 审计:模型行为(工具调用)打进日志,事后可查它读了什么
+        print(text[-4000:] if len(text) > 4000 else text, file=sys.stderr)
         if p.returncode != 0:
             err = f"kilo exit {p.returncode}: {text[-200:]}"
             continue
