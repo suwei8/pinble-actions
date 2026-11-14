@@ -55,15 +55,18 @@ DIMS = {
     40: ("上期数字回避", "尽量不使用上一期出现过的数字,选与上期数字交集最小的注"),
 }
 
-def build_prompt(dim, csv_abs):
+def build_prompt(dim, csv_abs, neg=False):
     name, ins = DIMS[dim]
+    if neg:
+        ask = f"本期分析维度「{name}」,其评估标准为:{ins}。\n请基于全部历史数据,按该维度反向推断——选出在该维度评价下【最不可能开出】的直选。"
+    else:
+        ask = f"本期分析维度「{name}」:{ins}。\n请基于文件中的全部历史数据,按该维度推断下一期最可能开出的直选。"
     return f"""你是福彩3D试机号直选分析师。历史开奖数据在本地文件 {csv_abs}
 (CSV格式,含列 Issue=期号, ShiJiHao=三位直选号码,按时间顺序排列)。
 请用工具自行读取该文件;如需统计,也可以运行命令或脚本计算。
 注意:期号段 {BAD_SEGMENTS} 为已知坏数据,统计时请剔除。
 
-本期分析维度「{name}」:{ins}。
-请基于文件中的全部历史数据,按该维度推断下一期最可能开出的直选。
+{ask}
 
 输出要求:
 - 最终回复中分析过程不超过3行,然后单独输出一行 =====
@@ -87,7 +90,7 @@ def extract(text):
     nums = scan(tail) or scan(lines)
     return list(dict.fromkeys(nums))[:40]
 
-def call_kilo(model, dim, csv_abs, upto, timeout_s):
+def call_kilo(model, dim, csv_abs, upto, neg, timeout_s):
     # 临时工作目录:CSV 拷进去供模型读取,模型产生的临时文件也落在这里,
     # 不污染仓库(避免被 aggregate 的 git add experiments/ 误提交)
     with tempfile.TemporaryDirectory() as td:
@@ -112,7 +115,7 @@ def call_kilo(model, dim, csv_abs, upto, timeout_s):
                         '"tools":{"webfetch":false,"websearch":false}}')
         else:
             shutil.copy2(csv_abs, local)
-        prompt = build_prompt(dim, local)
+        prompt = build_prompt(dim, local, neg)
         return subprocess.run(
             ["kilo", "run", "--auto", "--pure", "-m", model, prompt],
             capture_output=True, text=True, cwd=td, timeout=timeout_s)
@@ -125,6 +128,7 @@ def main():
     ap.add_argument("--model", default="kilo/nvidia/nemotron-3-ultra-550b-a55b:free")
     ap.add_argument("--timeout", type=int, default=420)
     ap.add_argument("--upto", type=int, default=0)      # 盲测:只保留期号<=upto的行
+    ap.add_argument("--neg", action="store_true")       # 负向:选"最不可能开出"的注
     a = ap.parse_args()
     csv_abs = os.path.abspath(a.csv)
     if not os.path.isfile(csv_abs):
@@ -134,7 +138,7 @@ def main():
     nums, err = [], ""
     for attempt in (1, 2):
         try:
-            p = call_kilo(a.model, a.dim, csv_abs, a.upto, a.timeout)
+            p = call_kilo(a.model, a.dim, csv_abs, a.upto, a.neg, a.timeout)
         except subprocess.TimeoutExpired:
             err = f"timeout {a.timeout}s"
             continue
@@ -157,7 +161,7 @@ def main():
         print(f"dim{a.dim} {name} 仅 {len(nums)} 注({err})", file=sys.stderr)
 
     with open(a.out, "w", encoding="utf-8") as f:
-        f.write(f"# dim{a.dim} {name} model={a.model} n={len(nums)}\n")
+        f.write(f"# dim{a.dim} {name} model={a.model} n={len(nums)}{' neg' if a.neg else ''}\n")
         for n in nums:
             f.write(n + "\n")
     print(f"dim{a.dim} {name} 共{len(nums)}注: {' '.join(nums)}")

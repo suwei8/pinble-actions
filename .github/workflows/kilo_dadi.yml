@@ -22,6 +22,14 @@ on:
         description: 大底注数覆盖(留空=用KILO_POOL_N默认值)
         required: false
         default: ''
+      neg:
+        description: 负向杀号模式(填true=模型选"最不可能"的注,聚合杀top-K)
+        required: false
+        default: ''
+      killn:
+        description: 负向排除注数(仅neg模式;留空=200 → 大底800)
+        required: false
+        default: ''
 
 env:
   # Kilo 免费模型(免登录);换模型只改这一处
@@ -85,8 +93,10 @@ jobs:
           fi
           UPTO="${{ github.event.inputs.upto }}"
           [ -z "$UPTO" ] && UPTO=0
+          NEG=""
+          [ "${{ github.event.inputs.neg }}" = "true" ] && NEG="--neg"
           python experiments/kilo_predict.py --dim ${{ matrix.dim }} --csv "$CSV" \
-            --out pred_${{ matrix.dim }}.txt --model "$KILO_MODEL" --upto "$UPTO"
+            --out pred_${{ matrix.dim }}.txt --model "$KILO_MODEL" --upto "$UPTO" $NEG
 
       - name: 上传预测
         uses: actions/upload-artifact@v4
@@ -139,10 +149,14 @@ jobs:
           [ -z "$UPTO" ] && UPTO=0
           PN="${{ github.event.inputs.pooln }}"
           [ -z "$PN" ] && PN="$KILO_POOL_N"
+          KN="${{ github.event.inputs.killn }}"
+          [ -z "$KN" ] && KN=200
+          NEG=""
+          [ "${{ github.event.inputs.neg }}" = "true" ] && NEG="--neg"
           EXTRA=""
           [ -n "$ACT" ] && EXTRA="--actual $ACT --no-ledger"
           python experiments/kilo_aggregate.py --csv "$CSV" --preds preds --model "$KILO_MODEL" \
-            --pool-n "$PN" --upto "$UPTO" $EXTRA
+            --pool-n "$PN" --upto "$UPTO" --kill-n "$KN" $NEG $EXTRA
 
       - name: 回写账本
         run: |

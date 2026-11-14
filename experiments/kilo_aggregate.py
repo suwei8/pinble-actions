@@ -81,6 +81,8 @@ def main():
     ap.add_argument("--no-ledger", action="store_true") # 盲测模式:不写账本/池文件
     ap.add_argument("--pool-n", type=int, default=350)  # 大底目标注数(加权得分top-N)
     ap.add_argument("--upto", type=int, default=0)      # 盲测:只认期号<=upto的数据
+    ap.add_argument("--neg", action="store_true")       # 负向:并集排名=排除候选
+    ap.add_argument("--kill-n", type=int, default=200)  # 负向排除注数(残余=大底)
     a = ap.parse_args()
 
     actual_map = load_csv(a.csv)
@@ -99,9 +101,15 @@ def main():
                 r += 1
                 score[line] = score.get(line, 0) + (41 - r)  # 维度内第r名得41-r分
     ranked = sorted(score, key=lambda n: (-score[n], n))
-    pool = sorted(ranked[:a.pool_n])   # 正向·加权得分 top-N = 大底
-    kill = ALL - set(pool)             # 其余号码视为排除
-    print(f"runner预测文件 {len(files)} 个,并集 {len(score)} 注 → 加权top{a.pool_n} 大底 {len(pool)} 注,排除 {len(kill)} 注")
+    if a.neg:
+        # 负向杀号:加权排名靠前=多维度共认"最不可能" → 杀掉,残余800=大底
+        kill = set(ranked[:a.kill_n])
+        pool = sorted(ALL - kill)
+        print(f"runner预测文件 {len(files)} 个,并集 {len(score)} 注 → 负向杀 top{len(kill)} 大底 {len(pool)} 注")
+    else:
+        pool = sorted(ranked[:a.pool_n])   # 正向·加权得分 top-N = 大底
+        kill = ALL - set(pool)             # 其余号码视为排除
+        print(f"runner预测文件 {len(files)} 个,并集 {len(score)} 注 → 加权top{a.pool_n} 大底 {len(pool)} 注,排除 {len(kill)} 注")
 
     # 结算(盲测模式跳过账本)
     ledger = read_ledger()
@@ -125,7 +133,8 @@ def main():
                        "status": "pending", "actual": "", "hit": "", "actual_rank": ""})
         os.makedirs(POOLS, exist_ok=True)
         with open(os.path.join(POOLS, f"{target}.txt"), "w", encoding="utf-8") as f:
-            f.write(f"# {target}期大模型直选大底(正向·加权top{a.pool_n}) 生成{gen} 大底{len(pool)}注 排除{len(kill)}注\n")
+            mode = f"负向·杀top{a.kill_n}" if a.neg else f"正向·加权top{a.pool_n}"
+            f.write(f"# {target}期大模型直选大底({mode}) 生成{gen} 大底{len(pool)}注 排除{len(kill)}注\n")
             f.write("\n".join(pool) + "\n")
         # 全量名次文件:结算时用 actual_rank 记录实际号在加权榜上的位置
         with open(os.path.join(POOLS, f"{target}_ranked.txt"), "w", encoding="utf-8") as f:
@@ -135,11 +144,15 @@ def main():
 
     done = [] if a.no_ledger else [r for r in ledger if r["status"] == "settled"]
     nh = sum(1 for r in done if r["hit"] == "1")
-    msg = f"拼搏 {target}期 大模型直选大底实验·正向(福彩3D)\n"
+    msg = f"拼搏 {target}期 大模型直选大底实验·{'负向' if a.neg else '正向'}(福彩3D)\n"
     if a.model:
         msg += f"模型 {a.model}\n"
-    msg += (f"40维提示词runner → 并集 {len(score)} 注,加权top{a.pool_n} "
-            f"→ 大底 {len(pool)} 注(排除 {len(kill)} 注)\n")
+    if a.neg:
+        msg += (f"40维负向runner → 并集 {len(score)} 注,杀top{len(kill)} "
+                f"→ 大底 {len(pool)} 注\n")
+    else:
+        msg += (f"40维提示词runner → 并集 {len(score)} 注,加权top{a.pool_n} "
+                f"→ 大底 {len(pool)} 注(排除 {len(kill)} 注)\n")
     if settled_now:
         msg += (f"上期结算:{settled_now['target_issue']}期 实际 {settled_now['actual']} "
                 f"→ {'命中' if settled_now['hit'] == '1' else '未中'}"
@@ -147,17 +160,27 @@ def main():
     if done:
         msg += f"累计:{nh}/{len(done)} 命中({nh / len(done) * 100:.0f}%)\n"
     if a.actual:
-        for N in dict.fromkeys([a.pool_n, 275]):   # 主口径 + top275 对照口径
-            eff = min(N, len(ranked))
-            s = set(ranked[:N])
-            verdict = "命中大底" if a.actual in s else "未中"
-            msg += (f"盲测判决top{eff}:{target}期实际 {a.actual} → {verdict}"
-                    f"(大底{eff}注,随机基线{eff / 10:.0f}%)\n")
+        if a.neg:
+            for N in dict.fromkeys([a.kill_n, 300]):   # 主口径 + kill300 对照
+                eff = min(N, len(ranked))
+                s = ALL - set(ranked[:eff])
+                verdict = "命中大底" if a.actual in s else "未中"
+                msg += (f"盲测判决kill{eff}:{target}期实际 {a.actual} → {verdict}"
+                        f"(大底{1000 - eff}注,随机基线{(1000 - eff) / 10:.0f}%)\n")
+        else:
+            for N in dict.fromkeys([a.pool_n, 275]):   # 主口径 + top275 对照口径
+                eff = min(N, len(ranked))
+                s = set(ranked[:N])
+                verdict = "命中大底" if a.actual in s else "未中"
+                msg += (f"盲测判决top{eff}:{target}期实际 {a.actual} → {verdict}"
+                        f"(大底{eff}注,随机基线{eff / 10:.0f}%)\n")
         # 实际号在加权榜上的名次——比命中与否更细的排序质量信号
         rk = ranked.index(a.actual) + 1 if a.actual in score else None
         msg += f"实际号加权排名:{f'{rk}/{len(ranked)}' if rk else '未入并集'}\n"
         # 朴素基线:近300期数字频率top-N,同期对照LLM有无增量价值
-        nb = naive_pool(actual_map, min(a.pool_n, len(ranked)))
+        nb = naive_pool(actual_map, min(a.kill_n if a.neg else a.pool_n, len(ranked)))
+        if a.neg:
+            nb = ALL - nb   # 负向口径:朴素"最可能"的kill_n注被杀,残余为大底
         msg += (f"朴素基线top{len(nb)}(近300期数字频率):{a.actual} → "
                 f"{'命中' if a.actual in nb else '未中'}\n")
     msg += "大底:\n" + " ".join(pool)
