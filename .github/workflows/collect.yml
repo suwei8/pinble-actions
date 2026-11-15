@@ -99,6 +99,7 @@ jobs:
 
       - name: 通知 3dtong-v2 启动事前预测（只发送数据提交 SHA，不发送 CSV）
         if: steps.publish.outputs.master_changed == 'true'
+        continue-on-error: true   # dispatch token 失效不应掐死后续 TG 通知
         env:
           PREDICT_DISPATCH_TOKEN: ${{ secrets.PREDICT_DISPATCH_TOKEN }}
           SOURCE_COMMIT: ${{ steps.publish.outputs.source_commit }}
