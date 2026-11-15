@@ -109,12 +109,12 @@ def call_kilo(model, dim, csv_abs, upto, neg, timeout_s):
             # kilo 的文件/网络工具不受 cwd 限制——把源 CSV 也原地截断,
             # 让 runner 磁盘上不存在任何 >upto 的行
             shutil.copyfile(local, csv_abs)
-            # 项目级配置:盲测禁用联网工具,防联网查历史开奖结果
-            with open(os.path.join(td, "kilo.json"), "w", encoding="utf-8") as f:
-                f.write('{"permission":{"webfetch":"deny","websearch":"deny"},'
-                        '"tools":{"webfetch":false,"websearch":false}}')
         else:
             shutil.copy2(csv_abs, local)
+        # 项目级配置:一律禁用联网工具,防联网查历史开奖结果
+        with open(os.path.join(td, "kilo.json"), "w", encoding="utf-8") as f:
+            f.write('{"permission":{"webfetch":"deny","websearch":"deny"},'
+                    '"tools":{"webfetch":false,"websearch":false}}')
         prompt = build_prompt(dim, local, neg)
         return subprocess.run(
             ["kilo", "run", "--auto", "--pure", "-m", model, prompt],
