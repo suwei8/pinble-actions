@@ -46,6 +46,10 @@ jobs:
           if [ -f forward/topk_ledger.csv ]; then
             OLD_TARGET=$(tail -n 1 forward/topk_ledger.csv | cut -d, -f1)
           fi
+          OLD_P3=""
+          if [ -f forward/p3/topk_ledger.csv ]; then
+            OLD_P3=$(tail -n 1 forward/p3/topk_ledger.csv | cut -d, -f1)
+          fi
           python forward_predict.py > /tmp/predict.log 2>&1
           cat /tmp/predict.log
           NEW_TARGET=""
@@ -64,6 +68,20 @@ jobs:
             fi
           else
             echo "new=false" >> "$GITHUB_OUTPUT"
+          fi
+          # 排列3:同源脚本同步结算/预注册,账本在 forward/p3/
+          if [ -f forward/p3/topk_ledger.csv ]; then
+            L=$(tail -n 1 forward/p3/topk_ledger.csv)
+            echo "p3_target=$(echo "$L" | cut -d, -f1)" >> "$GITHUB_OUTPUT"
+            echo "p3_top1=$(echo "$L" | cut -d, -f5)" >> "$GITHUB_OUTPUT"
+            echo "p3_top2=$(echo "$L" | cut -d, -f6)" >> "$GITHUB_OUTPUT"
+            echo "p3_top3=$(echo "$L" | cut -d, -f7)" >> "$GITHUB_OUTPUT"
+          fi
+          NEW_P3=$(tail -n 1 forward/p3/topk_ledger.csv 2>/dev/null | cut -d, -f1)
+          if [ -n "$NEW_P3" ] && [ "$OLD_P3" != "$NEW_P3" ]; then
+            echo "p3_new=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "p3_new=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: 回写数据仓
@@ -91,19 +109,38 @@ jobs:
           exit 1
 
       - name: 发送预测到微信
-        if: steps.predict.outputs.target != '' && (steps.predict.outputs.new == 'true' || github.event_name == 'workflow_dispatch')
+        if: (steps.predict.outputs.target != '' || steps.predict.outputs.p3_target != '') && (steps.predict.outputs.new == 'true' || steps.predict.outputs.p3_new == 'true' || github.event_name == 'workflow_dispatch')
         env:
           WKY_API_TOKEN: ${{ secrets.WKY_API_TOKEN }}
           TARGET: ${{ steps.predict.outputs.target }}
           TOP1: ${{ steps.predict.outputs.top1 }}
           TOP2: ${{ steps.predict.outputs.top2 }}
           TOP3: ${{ steps.predict.outputs.top3 }}
+          P3_TARGET: ${{ steps.predict.outputs.p3_target }}
+          P3_TOP1: ${{ steps.predict.outputs.p3_top1 }}
+          P3_TOP2: ${{ steps.predict.outputs.p3_top2 }}
+          P3_TOP3: ${{ steps.predict.outputs.p3_top3 }}
         run: |
           if [ -z "$WKY_API_TOKEN" ]; then
             echo "::warning::未设置 Secret WKY_API_TOKEN，跳过微信推送（预测已回写数据仓）"
             exit 0
           fi
-          python3 -c "import json,os; target=os.environ['TARGET']; top1=os.environ['TOP1']; top2=os.environ['TOP2'].replace('|','、'); top3=os.environ['TOP3'].replace('|','、'); msg=f'试机号预测 {target}期\n独胆: {top1}\n二码: {top2}\n三码: {top3}'; payload={'actions':[{'type':'wechat_message','row':1,'text':msg}]}; open('/tmp/wx_payload.json','w',encoding='utf-8').write(json.dumps(payload,ensure_ascii=False)); print(msg)"
+          python3 - <<'PY'
+          import json, os
+          parts = []
+          if os.environ.get("TARGET"):
+              t2 = os.environ["TOP2"].replace("|", "、")
+              t3 = os.environ["TOP3"].replace("|", "、")
+              parts.append(f"试机号预测 {os.environ['TARGET']}期(福彩3D)\n独胆: {os.environ['TOP1']}\n二码: {t2}\n三码: {t3}")
+          if os.environ.get("P3_TARGET"):
+              t2 = os.environ["P3_TOP2"].replace("|", "、")
+              t3 = os.environ["P3_TOP3"].replace("|", "、")
+              parts.append(f"试机号预测 {os.environ['P3_TARGET']}期(排列3)\n独胆: {os.environ['P3_TOP1']}\n二码: {t2}\n三码: {t3}")
+          msg = "\n\n".join(parts)
+          payload = {"actions": [{"type": "wechat_message", "row": 1, "text": msg}]}
+          open("/tmp/wx_payload.json", "w", encoding="utf-8").write(json.dumps(payload, ensure_ascii=False))
+          print(msg)
+          PY
           echo "正在推送..."
           curl --fail --silent --show-error --retry 2 --retry-delay 3 --max-time 120 -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $WKY_API_TOKEN" "https://pa.555606.xyz/v1/notify" -d @/tmp/wx_payload.json
           echo ""
@@ -111,7 +148,7 @@ jobs:
 
       # 每日 10:00(北京) 推送当日待开奖期预测; 其他滚动时段不推 (避免重复)
       - name: TG 通知（当日预测）
-        if: steps.predict.outputs.target != '' && (github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch')
+        if: (steps.predict.outputs.target != '' || steps.predict.outputs.p3_target != '') && (github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch')
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -119,6 +156,10 @@ jobs:
           TOP1: ${{ steps.predict.outputs.top1 }}
           TOP2: ${{ steps.predict.outputs.top2 }}
           TOP3: ${{ steps.predict.outputs.top3 }}
+          P3_TARGET: ${{ steps.predict.outputs.p3_target }}
+          P3_TOP1: ${{ steps.predict.outputs.p3_top1 }}
+          P3_TOP2: ${{ steps.predict.outputs.p3_top2 }}
+          P3_TOP3: ${{ steps.predict.outputs.p3_top3 }}
         run: |
           python3 - <<'PY'
           import csv, os, sys
@@ -130,18 +171,32 @@ jobs:
               print("::warning::未设置 TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID，跳过 TG 通知")
               sys.exit(0)
 
+          def pending(ledger):
+              try:
+                  with open(ledger, encoding="utf-8-sig") as f:
+                      return list(csv.DictReader(f))[-1]["status"] == "pending"
+              except FileNotFoundError:
+                  return False
+
+          parts = []
           # 仅当最新预测仍为 pending（未结算 = 待开奖期）时推送
-          with open("main/forward/topk_ledger.csv", encoding="utf-8-sig") as f:
-              last = list(csv.DictReader(f))[-1]
-          if last["status"] != "pending":
-              print(f"最新预测 {last['target_issue']} 已结算，跳过 TG 推送")
+          if os.environ.get("TARGET") and pending("main/forward/topk_ledger.csv"):
+              t2 = os.environ["TOP2"].replace("|", "、")
+              t3 = os.environ["TOP3"].replace("|", "、")
+              parts.append(f"拼搏 {os.environ['TARGET']}期预测(福彩3D)\n独胆：{os.environ['TOP1']}\n二码：{t2}\n三码：{t3}")
+          else:
+              print("福彩3D 最新预测已结算或无目标,跳过")
+          if os.environ.get("P3_TARGET") and pending("main/forward/p3/topk_ledger.csv"):
+              t2 = os.environ["P3_TOP2"].replace("|", "、")
+              t3 = os.environ["P3_TOP3"].replace("|", "、")
+              parts.append(f"拼搏 {os.environ['P3_TARGET']}期预测(排列3)\n独胆：{os.environ['P3_TOP1']}\n二码：{t2}\n三码：{t3}")
+          else:
+              print("排列3 最新预测已结算或无目标,跳过")
+          if not parts:
+              print("两彩种均已结算,跳过 TG 推送")
               sys.exit(0)
 
-          t1 = os.environ["TOP1"].replace("|", "、")
-          t2 = os.environ["TOP2"].replace("|", "、")
-          t3 = os.environ["TOP3"].replace("|", "、")
-          msg = (f"拼搏 {os.environ['TARGET']}期预测\n"
-                 f"独胆：{t1}\n二码：{t2}\n三码：{t3}")
+          msg = "\n\n".join(parts)
           resp = requests.post(
               f"https://api.telegram.org/bot{token}/sendMessage",
               json={"chat_id": chat, "text": msg},
