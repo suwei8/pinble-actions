@@ -12,6 +12,12 @@ on:
     - cron: '0,10,20,30,40,50 14 * * *'
     - cron: '0 15 * * *'
   workflow_dispatch:
+    inputs:
+      tg_test:
+        description: '强制发送当前试机号 TG 通知(跳过入库去重, 测试/重发用)'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write   # 供心跳写回本仓(防 schedule 60 天休眠)
@@ -132,7 +138,7 @@ jobs:
       #   {,p3_}filled_kj>0 -> 往已有行补写开奖号
       # 备份时段重跑时三者均为 0, 不会重复推送
       - name: TG 通知（试机号 / 开奖号命中结果）
-        if: steps.collect.outcome == 'success' && (steps.collect.outputs.added != '0' || steps.collect.outputs.filled_sj != '0' || steps.collect.outputs.filled_kj != '0' || steps.collect.outputs.p3_added != '0' || steps.collect.outputs.p3_filled_sj != '0' || steps.collect.outputs.p3_filled_kj != '0')
+        if: steps.collect.outcome == 'success' && (inputs.tg_test == true || steps.collect.outputs.added != '0' || steps.collect.outputs.filled_sj != '0' || steps.collect.outputs.filled_kj != '0' || steps.collect.outputs.p3_added != '0' || steps.collect.outputs.p3_filled_sj != '0' || steps.collect.outputs.p3_filled_kj != '0')
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -147,6 +153,10 @@ jobs:
           P3_FILLED_SJ: ${{ steps.collect.outputs.p3_filled_sj }}
           P3_FILLED_KJ: ${{ steps.collect.outputs.p3_filled_kj }}
         run: |
+          if [ "${{ inputs.tg_test }}" = "true" ]; then
+            export ADDED=1 P3_ADDED=1
+            echo "tg_test: 强制发送当前试机号通知(added=0 也发)"
+          fi
           python3 - <<'PY'
           import csv, os, sys
           import requests
