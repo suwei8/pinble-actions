@@ -3,8 +3,8 @@ name: 每日增量采集
 on:
   schedule:
     # GitHub Actions 的 cron 只认 UTC; 高负载时延迟可达数小时, 故用密集触发网对冲
-    # 时段一: 北京 17:00-19:30 每10分钟一次采集试机号 (采集幂等, 重复无妨)
-    - cron: '5,15,25,35,45,55 9 * * *'
+    # 时段一: 北京 17:01-19:30 每10分钟一次采集试机号 (采集幂等, 重复无妨)
+    - cron: '1,11,21,31,41,51 9 * * *'
     - cron: '5,15,25,35,45,55 10 * * *'
     - cron: '5,15,25 11 * * *'
     # 时段二: 北京 21:15-23:00 每10分钟一次采集开奖号
@@ -127,10 +127,10 @@ jobs:
           echo "通知已发送到 3dtong-v2 (source commit: $SOURCE_COMMIT)"
 
       # TG 去重依据: 仅当本次运行真正写入新数据时推送
-      #   filled_sj>0 -> 试机号首次入库    filled_kj>0 -> 开奖号首次入库
+      #   {,p3_}filled_sj>0 -> 试机号首次入库    {,p3_}filled_kj>0 -> 开奖号首次入库
       # 备份时段重跑时两者均为 0, 不会重复推送
       - name: TG 通知（试机号 / 开奖号命中结果）
-        if: steps.collect.outcome == 'success' && (steps.collect.outputs.filled_sj != '0' || steps.collect.outputs.filled_kj != '0')
+        if: steps.collect.outcome == 'success' && (steps.collect.outputs.filled_sj != '0' || steps.collect.outputs.filled_kj != '0' || steps.collect.outputs.p3_filled_sj != '0' || steps.collect.outputs.p3_filled_kj != '0')
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -138,6 +138,10 @@ jobs:
           SJCODE: ${{ steps.collect.outputs.sjcode }}
           FILLED_SJ: ${{ steps.collect.outputs.filled_sj }}
           FILLED_KJ: ${{ steps.collect.outputs.filled_kj }}
+          P3_ISSUE: ${{ steps.collect.outputs.p3_issue }}
+          P3_SJCODE: ${{ steps.collect.outputs.p3_sjcode }}
+          P3_FILLED_SJ: ${{ steps.collect.outputs.p3_filled_sj }}
+          P3_FILLED_KJ: ${{ steps.collect.outputs.p3_filled_kj }}
         run: |
           python3 - <<'PY'
           import csv, os, sys
@@ -149,9 +153,11 @@ jobs:
               print("::warning::未设置 TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID，跳过 TG 通知")
               sys.exit(0)
 
-          def prediction(issue):
+          def prediction(issue, ledger):
               """topk_ledger 中该期预测; 返回 (独胆, 二码, 三码, 三码集合)"""
-              with open("main/forward/topk_ledger.csv", encoding="utf-8-sig") as f:
+              if not os.path.exists(ledger):
+                  return "—", "—", "—", set()
+              with open(ledger, encoding="utf-8-sig") as f:
                   for row in csv.DictReader(f):
                       if row["target_issue"] == str(issue):
                           picks = {x for x in row["top3"].split("|") if x}
@@ -165,29 +171,41 @@ jobs:
               """三码集合中实际出现的不同数字个数"""
               return len(set(code) & picks)
 
-          def header(issue):
-              t1, t2, t3, _ = prediction(issue)
-              return (f"拼搏 {issue}期预测命中结果\n"
+          def header(issue, label, ledger):
+              t1, t2, t3, _ = prediction(issue, ledger)
+              return (f"拼搏 {issue}期预测命中结果({label})\n"
                       f"独胆：{t1}\n二码：{t2}\n三码：{t3}")
 
-          messages = []
+          def sj_msg(env_issue, env_code, env_filled, label, ledger):
+              """试机号首次入库消息"""
+              if os.environ.get(env_filled, "0") == "0" or not os.environ.get(env_code):
+                  return None
+              issue, code = os.environ[env_issue], os.environ[env_code]
+              picks = prediction(issue, ledger)[3]
+              return (f"{header(issue, label, ledger)}\n\n"
+                      f"拼搏试机号：{code}\n命中：{hit_count(code, picks)}码")
 
-          # 试机号首次入库 -> 时段一消息
-          if os.environ.get("FILLED_SJ", "0") != "0" and os.environ.get("SJCODE"):
-              issue, code = os.environ["ISSUE"], os.environ["SJCODE"]
-              picks = prediction(issue)[3]
-              messages.append(f"{header(issue)}\n\n拼搏试机号：{code}\n命中：{hit_count(code, picks)}码")
-
-          # 开奖号首次入库 -> 时段二消息（取主表中最新一条已开奖记录）
-          if os.environ.get("FILLED_KJ", "0") != "0":
-              with open("main/data/k3_full_history.csv", encoding="utf-8-sig") as f:
+          def kj_msg(env_filled, csv_path, label, ledger, kj_label):
+              """开奖号首次入库消息（取主表中最新一条已开奖记录）"""
+              if os.environ.get(env_filled, "0") == "0":
+                  return None
+              with open(csv_path, encoding="utf-8-sig") as f:
                   for row in csv.DictReader(f):  # 主表按期号倒序
                       code = row["KaiJiang"].strip()
                       if code:
                           issue = row["Issue"]
-                          picks = prediction(issue)[3]
-                          messages.append(f"{header(issue)}\n\n福彩开奖号：{code}\n命中：{hit_count(code, picks)}码")
-                          break
+                          picks = prediction(issue, ledger)[3]
+                          return (f"{header(issue, label, ledger)}\n\n"
+                                  f"{kj_label}：{code}\n命中：{hit_count(code, picks)}码")
+              return None
+
+          K3_LEDGER, P3_LEDGER = "main/forward/topk_ledger.csv", "main/forward/p3/topk_ledger.csv"
+          messages = [m for m in (
+              sj_msg("ISSUE", "SJCODE", "FILLED_SJ", "福彩3D", K3_LEDGER),
+              sj_msg("P3_ISSUE", "P3_SJCODE", "P3_FILLED_SJ", "排列3", P3_LEDGER),
+              kj_msg("FILLED_KJ", "main/data/k3_full_history.csv", "福彩3D", K3_LEDGER, "福彩开奖号"),
+              kj_msg("P3_FILLED_KJ", "main/data/p3_full_history.csv", "排列3", P3_LEDGER, "排列3开奖号"),
+          ) if m]
 
           for msg in messages:
               resp = requests.post(
