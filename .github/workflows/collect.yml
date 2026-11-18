@@ -127,19 +127,23 @@ jobs:
           echo "通知已发送到 3dtong-v2 (source commit: $SOURCE_COMMIT)"
 
       # TG 去重依据: 仅当本次运行真正写入新数据时推送
-      #   {,p3_}filled_sj>0 -> 试机号首次入库    {,p3_}filled_kj>0 -> 开奖号首次入库
-      # 备份时段重跑时两者均为 0, 不会重复推送
+      #   {,p3_}added>0     -> 新期行入库(试机号通常随新行到达)
+      #   {,p3_}filled_sj>0 -> 往已有行补写试机号
+      #   {,p3_}filled_kj>0 -> 往已有行补写开奖号
+      # 备份时段重跑时三者均为 0, 不会重复推送
       - name: TG 通知（试机号 / 开奖号命中结果）
-        if: steps.collect.outcome == 'success' && (steps.collect.outputs.filled_sj != '0' || steps.collect.outputs.filled_kj != '0' || steps.collect.outputs.p3_filled_sj != '0' || steps.collect.outputs.p3_filled_kj != '0')
+        if: steps.collect.outcome == 'success' && (steps.collect.outputs.added != '0' || steps.collect.outputs.filled_sj != '0' || steps.collect.outputs.filled_kj != '0' || steps.collect.outputs.p3_added != '0' || steps.collect.outputs.p3_filled_sj != '0' || steps.collect.outputs.p3_filled_kj != '0')
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           ISSUE: ${{ steps.collect.outputs.issue }}
           SJCODE: ${{ steps.collect.outputs.sjcode }}
+          ADDED: ${{ steps.collect.outputs.added }}
           FILLED_SJ: ${{ steps.collect.outputs.filled_sj }}
           FILLED_KJ: ${{ steps.collect.outputs.filled_kj }}
           P3_ISSUE: ${{ steps.collect.outputs.p3_issue }}
           P3_SJCODE: ${{ steps.collect.outputs.p3_sjcode }}
+          P3_ADDED: ${{ steps.collect.outputs.p3_added }}
           P3_FILLED_SJ: ${{ steps.collect.outputs.p3_filled_sj }}
           P3_FILLED_KJ: ${{ steps.collect.outputs.p3_filled_kj }}
         run: |
@@ -176,35 +180,44 @@ jobs:
               return (f"拼搏 {issue}期预测命中结果({label})\n"
                       f"独胆：{t1}\n二码：{t2}\n三码：{t3}")
 
-          def sj_msg(env_issue, env_code, env_filled, label, ledger):
-              """试机号首次入库消息"""
-              if os.environ.get(env_filled, "0") == "0" or not os.environ.get(env_code):
+          def sj_msg(env_issue, env_code, env_filled, env_added, label, ledger):
+              """试机号入库消息: 新行自带(added>0)或往已有行补写(filled_sj>0)"""
+              if (os.environ.get(env_filled, "0") == "0"
+                      and os.environ.get(env_added, "0") == "0"):
+                  return None
+              if not os.environ.get(env_code):
                   return None
               issue, code = os.environ[env_issue], os.environ[env_code]
               picks = prediction(issue, ledger)[3]
               return (f"{header(issue, label, ledger)}\n\n"
                       f"拼搏试机号：{code}\n命中：{hit_count(code, picks)}码")
 
-          def kj_msg(env_filled, csv_path, label, ledger, kj_label):
-              """开奖号首次入库消息（取主表中最新一条已开奖记录）"""
-              if os.environ.get(env_filled, "0") == "0":
+          def kj_msg(env_filled, env_added, env_issue, csv_path, label, ledger, kj_label):
+              """开奖号入库消息: 补写(filled_kj>0)取最新开奖行;
+              新行自带开奖号(added>0)则限定该新增期"""
+              filled = os.environ.get(env_filled, "0") != "0"
+              if not filled and os.environ.get(env_added, "0") == "0":
                   return None
+              target_issue = os.environ.get(env_issue, "")
               with open(csv_path, encoding="utf-8-sig") as f:
                   for row in csv.DictReader(f):  # 主表按期号倒序
                       code = row["KaiJiang"].strip()
-                      if code:
-                          issue = row["Issue"]
-                          picks = prediction(issue, ledger)[3]
-                          return (f"{header(issue, label, ledger)}\n\n"
-                                  f"{kj_label}：{code}\n命中：{hit_count(code, picks)}码")
+                      if not code:
+                          continue
+                      if not filled and row["Issue"] != target_issue:
+                          continue
+                      issue = row["Issue"]
+                      picks = prediction(issue, ledger)[3]
+                      return (f"{header(issue, label, ledger)}\n\n"
+                              f"{kj_label}：{code}\n命中：{hit_count(code, picks)}码")
               return None
 
           K3_LEDGER, P3_LEDGER = "main/forward/topk_ledger.csv", "main/forward/p3/topk_ledger.csv"
           messages = [m for m in (
-              sj_msg("ISSUE", "SJCODE", "FILLED_SJ", "福彩3D", K3_LEDGER),
-              sj_msg("P3_ISSUE", "P3_SJCODE", "P3_FILLED_SJ", "排列3", P3_LEDGER),
-              kj_msg("FILLED_KJ", "main/data/k3_full_history.csv", "福彩3D", K3_LEDGER, "福彩开奖号"),
-              kj_msg("P3_FILLED_KJ", "main/data/p3_full_history.csv", "排列3", P3_LEDGER, "排列3开奖号"),
+              sj_msg("ISSUE", "SJCODE", "FILLED_SJ", "ADDED", "福彩3D", K3_LEDGER),
+              sj_msg("P3_ISSUE", "P3_SJCODE", "P3_FILLED_SJ", "P3_ADDED", "排列3", P3_LEDGER),
+              kj_msg("FILLED_KJ", "ADDED", "ISSUE", "main/data/k3_full_history.csv", "福彩3D", K3_LEDGER, "福彩开奖号"),
+              kj_msg("P3_FILLED_KJ", "P3_ADDED", "P3_ISSUE", "main/data/p3_full_history.csv", "排列3", P3_LEDGER, "排列3开奖号"),
           ) if m]
 
           for msg in messages:
